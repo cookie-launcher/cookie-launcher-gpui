@@ -32,7 +32,7 @@ CL_TAB=modrinth cargo run # belirli sekmede aç
 | Mojang sürüm manifesti (922 sürüm, disk cache) | `core.rs` | ✅ |
 | Vanilla launch: jar + kütüphaneler + natives + assetler + JVM | `launch.rs` | ✅ doğrulandı |
 | **Fabric / Quilt** profili (`inheritsFrom` birleştirme, ASM dedupe) | `launch.rs` | ✅ doğrulandı |
-| Forge / NeoForge | — | ❌ açık hata veriyor |
+| **Forge / NeoForge** (resmi installer + `arguments` hattı) | `core.rs` + `launch.rs` | ✅ doğrulandı (1.20.1 Forge, 1.21.1 NeoForge) |
 | Modrinth arama (sürüm + yükleyici facet'li) | `core.rs` | ✅ |
 | Modrinth kurulum (jar + bağımlılık) | `core.rs` | ✅ |
 | **Modpack kurulumu** (`.mrpack` → profil) | `core.rs` | ✅ doğrulandı (47 mod) |
@@ -85,7 +85,6 @@ penceresi. GPUI `actions!` + `cx.bind_keys` + kök `key_context("Launcher")`.
 ## Samimi olarak eksik olanlar
 
 - **Profil detay ekranı** (`pds-*`): içerik/sürüm/dünya/log/not sekmeleri
-- Forge / NeoForge kurulumu (şu an net hata)
 - Modpack içeriğini sonradan güncelleme
 - `Noise_XX` uçtan uca şifreleme (CLT1 kimlik doğrulama var, taşıma şifrelemesi yok)
 - Uygulama ikonu / paketleme (AppImage, deb, .desktop)
@@ -127,6 +126,8 @@ Her biri gerçek uzak servislerle çalışır, çıktısı yukarıdaki test turu
 | `--search-probe 1.21.11 fabric` | Fabric API, Sodium |
 | `--install-probe sodium mod` | `sodium-fabric-0.6.13+mc1.21.4.jar` kuruldu |
 | `--modpack-probe fabulously-optimized` | 49 dosya, **47 mod** |
+| `--forge-probe 1.20.1 forge` | installer çalışır, `1.20.1-forge-47.4.28` hazır (82 classpath) |
+| `--forge-probe 1.21.1 neoforge` | `neoforge-21.1.99` hazır (93 classpath) |
 | `--launch-probe 1.21.4` | oyun açıldı (`running=true`, 71 classpath) |
 | `--relay-probe` | paylaş → katıl → `JOIN OK` |
 | `--lan-probe` | UDP 4445'e atılan sahte duyuru keşfediliyor |

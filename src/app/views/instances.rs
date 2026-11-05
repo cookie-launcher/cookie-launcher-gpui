@@ -53,18 +53,14 @@ impl AppView {
         for loader in ["vanilla", "fabric", "quilt", "forge", "neoforge"] {
             let value = loader.to_string();
             let selected = self.draft_loader == loader;
-            let supported = !matches!(loader, "forge" | "neoforge");
+            let supported = true;
             loaders = loaders.child(
                 Button::new(format!("draft-{loader}"))
                     .small()
                     .when(selected, |this| this.secondary())
                     .when(!selected, |this| this.ghost())
                     .disabled(!supported)
-                    .label(if supported {
-                        crate::api::loader_label(loader).to_string()
-                    } else {
-                        format!("{} · yakında", crate::api::loader_label(loader))
-                    })
+                    .label(crate::api::loader_label(loader))
                     .when(supported, |this| {
                         this.on_click(cx.listener(move |this, _, _, cx| {
                             this.draft_loader = value.clone();

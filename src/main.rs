@@ -48,7 +48,7 @@ fn main() {
                         std::thread::sleep(std::time::Duration::from_secs(25));
                         let status = core_arc.status();
                         println!("STATUS running={} pid={:?}", status.is_running, status.minecraft_pid);
-                        for line in core_arc.logs().iter().rev().take(12).rev() {
+                        for line in core_arc.logs().iter().rev().take(80).rev() {
                             println!("LOG {line}");
                         }
                         core_arc.stop();
@@ -102,6 +102,40 @@ fn main() {
                 core.stop_sharing();
             }
             Err(error) => println!("JOIN FAILED: {error}"),
+        }
+        return;
+    }
+
+    // `--forge-probe <mc> <forge|neoforge>` installs the loader and reports the
+    // resulting version id + classpath size (no game launch).
+    if std::env::args().any(|arg| arg == "--forge-probe") {
+        let args: Vec<String> = std::env::args().collect();
+        let pos = args.iter().position(|a| a == "--forge-probe").unwrap_or(0);
+        let mc = args.get(pos + 1).cloned().unwrap_or_else(|| "1.20.1".into());
+        let loader = args.get(pos + 2).cloned().unwrap_or_else(|| "forge".into());
+        let core = core::Core::new();
+        let instance = api::Instance {
+            id: "forge_probe".into(),
+            name: "Forge Probe".into(),
+            version: mc.clone(),
+            loader: loader.clone(),
+            ..Default::default()
+        };
+        match core.effective_version(&instance) {
+            Ok(version) => {
+                println!("effective version: {version}");
+                match core.prepare(&version) {
+                    Ok(prepared) => {
+                        println!("mainClass: {}", prepared.main_class);
+                        println!("classpath entries: {}", prepared.classpath.split(':').count());
+                    }
+                    Err(error) => println!("PREPARE FAILED: {error}"),
+                }
+            }
+            Err(error) => println!("INSTALL FAILED: {error}"),
+        }
+        for line in core.logs().iter().rev().take(4).rev() {
+            println!("LOG {line}");
         }
         return;
     }

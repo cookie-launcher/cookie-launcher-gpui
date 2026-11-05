@@ -20,6 +20,8 @@ const RESOURCES_URL: &str = "https://resources.download.minecraft.net";
 
 pub struct Prepared {
     pub main_class: String,
+    pub arguments: Option<Arguments>,
+    pub library_dir: PathBuf,
     pub classpath: String,
     pub assets_dir: PathBuf,
     pub asset_index: String,
@@ -43,6 +45,8 @@ struct VersionJson {
     downloads: Option<Downloads>,
     #[serde(rename = "javaVersion", default)]
     java_version: Option<JavaVersion>,
+    #[serde(default)]
+    arguments: Option<Arguments>,
 }
 
 #[derive(Deserialize, Serialize, Default)]
@@ -77,6 +81,28 @@ struct JavaVersion {
     major: u32,
 }
 
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+struct Arguments {
+    #[serde(default)]
+    jvm: Vec<ArgEntry>,
+    #[serde(default)]
+    game: Vec<ArgEntry>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(untagged)]
+enum ArgEntry {
+    Plain(String),
+    Conditional { rules: Vec<Rule>, value: ArgValue },
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(untagged)]
+enum ArgValue {
+    One(String),
+    Many(Vec<String>),
+}
+
 #[derive(Deserialize, serde::Serialize)]
 struct Library {
     #[serde(default)]
@@ -99,15 +125,18 @@ struct LibraryDownloads {
     classifiers: Option<std::collections::HashMap<String, Download>>,
 }
 
-#[derive(Deserialize, serde::Serialize)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 struct Rule {
     #[serde(default)]
     action: String,
     #[serde(default)]
     os: Option<RuleOs>,
+    /// e.g. `has_custom_resolution`, `is_demo_user`.
+    #[serde(default)]
+    features: Option<std::collections::HashMap<String, bool>>,
 }
 
-#[derive(Deserialize, serde::Serialize)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 struct RuleOs {
     #[serde(default)]
     name: String,
@@ -138,6 +167,18 @@ pub struct LaunchOptions<'a> {
     pub cookie_optimized: bool,
     pub aikar: bool,
 }
+
+/// `--add-opens` flags Forge/NeoForge need on JVMs 17 and newer.
+const FORGE_OPENS: [&str; 8] = [
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/java.io=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+];
 
 /// Aikar's G1GC flag set (the same one the Python core used for `jvm_preset`).
 const AIKAR_FLAGS: [&str; 8] = [
@@ -183,7 +224,16 @@ impl Core {
             jar_version = base_id;
             loader
         } else if version_json_path.exists() {
-            serde_json::from_str(&fs::read_to_string(&version_json_path)?)?
+            let on_disk: VersionJson = serde_json::from_str(&fs::read_to_string(&version_json_path)?)?;
+            if let Some(base_id) = on_disk.inherits_from.clone() {
+                // Forge/NeoForge installers write a profile that only carries
+                // their own libraries; the rest comes from the vanilla version.
+                let (merged, base) = merge_with_base(self, on_disk, &base_id)?;
+                jar_version = base;
+                merged
+            } else {
+                on_disk
+            }
         } else {
             let manifest: serde_json::Value = self.fetch_json(MANIFEST_URL)?;
             let url = manifest["versions"]
@@ -353,14 +403,33 @@ impl Core {
         }
 
         let _ = json.java_version.map(|j| j.major);
-        let client_jar = self
+        // A loader profile must own a jar named after itself: Forge puts its
+        // own name into `-DignoreList`, and leaving the vanilla jar there makes
+        // two modules export the same package.
+        let own_jar_dir = self.mc_dir.join("versions").join(version_id);
+        let own_jar = own_jar_dir.join(format!("{version_id}.jar"));
+        let base_jar = self
             .mc_dir
             .join("versions")
             .join(&jar_version)
             .join(format!("{jar_version}.jar"));
-        classpath.push(client_jar.to_string_lossy().to_string());
+        if jar_version != version_id {
+            if !own_jar.exists() && base_jar.exists() {
+                let _ = fs::create_dir_all(&own_jar_dir);
+                let _ = fs::copy(&base_jar, &own_jar);
+            }
+            if own_jar.exists() {
+                classpath.push(own_jar.to_string_lossy().to_string());
+            } else if base_jar.exists() {
+                classpath.push(base_jar.to_string_lossy().to_string());
+            }
+        } else if base_jar.exists() {
+            classpath.push(base_jar.to_string_lossy().to_string());
+        }
 
         Ok(Prepared {
+            arguments: json.arguments.clone(),
+            library_dir: lib_dir.clone(),
             main_class: if json.main_class.is_empty() {
                 "net.minecraft.client.main.Main".to_string()
             } else {
@@ -412,35 +481,87 @@ impl Core {
             let _ = apply_fullbright(&instance_dir);
         }
 
+        let os_name = std::env::consts::OS;
+        let mut vars: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+        vars.insert("natives_directory", prepared.natives_dir.display().to_string());
+        vars.insert("launcher_name", "CookieLauncher".to_string());
+        vars.insert("launcher_version", "4.0.0".to_string());
+        vars.insert("classpath", prepared.classpath.clone());
+        vars.insert("classpath_separator", ":".to_string());
+        vars.insert("library_directory", prepared.library_dir.display().to_string());
+        vars.insert("version_name", options.version.to_string());
+        vars.insert("game_directory", instance_dir.display().to_string());
+        vars.insert("assets_root", prepared.assets_dir.display().to_string());
+        vars.insert(
+            "game_assets",
+            prepared.assets_dir.join("virtual/legacy").display().to_string(),
+        );
+        vars.insert("assets_index_name", prepared.asset_index.clone());
+        vars.insert("auth_player_name", options.username.to_string());
+        vars.insert("auth_uuid", offline_uuid(options.username));
+        vars.insert("auth_access_token", "0".to_string());
+        vars.insert("clientid", "0".to_string());
+        vars.insert("auth_xuid", "0".to_string());
+        vars.insert("user_type", "legacy".to_string());
+        vars.insert("version_type", "CookieLauncher".to_string());
+
         let mut command = Command::new(java_binary());
+        command
+            .arg(format!("-Xmx{ram}G"))
+            .arg(format!("-Xms{}G", (ram / 2).max(1)));
         if options.aikar {
             for flag in AIKAR_FLAGS {
                 command.arg(flag);
             }
         }
-        command
-            .arg(format!("-Xmx{ram}G"))
-            .arg(format!("-Xms{}G", (ram / 2).max(1)))
-            .arg(format!("-Djava.library.path={}", prepared.natives_dir.display()))
-            .arg("-cp")
-            .arg(&prepared.classpath)
-            .arg(&prepared.main_class)
-            .arg("--username")
-            .arg(options.username)
-            .arg("--version")
-            .arg(options.version)
-            .arg("--gameDir")
-            .arg(&instance_dir)
-            .arg("--assetsDir")
-            .arg(&prepared.assets_dir)
-            .arg("--assetIndex")
-            .arg(&prepared.asset_index)
-            .arg("--uuid")
-            .arg(offline_uuid(options.username))
-            .arg("--accessToken")
-            .arg("0")
-            .arg("--userType")
-            .arg("legacy");
+
+        match &prepared.arguments {
+            Some(arguments) => {
+                // Modern profiles (vanilla 1.13+, Forge, NeoForge) describe their
+                // own command line; honour it instead of guessing.
+                for arg in expand_args(&arguments.jvm, &vars, os_name) {
+                    command.arg(arg);
+                }
+                command.arg(&prepared.main_class);
+                for arg in expand_args(&arguments.game, &vars, os_name) {
+                    command.arg(arg);
+                }
+            }
+            None => {
+                // Pre-1.13 profiles: build the classic command line by hand.
+                let loader_profile = options.version.contains("-forge-")
+                    || options.version.starts_with("neoforge-");
+                if loader_profile {
+                    for open in FORGE_OPENS {
+                        command.arg(open);
+                    }
+                }
+                command
+                    .arg(format!(
+                        "-Djava.library.path={}",
+                        prepared.natives_dir.display()
+                    ))
+                    .arg("-cp")
+                    .arg(&prepared.classpath)
+                    .arg(&prepared.main_class)
+                    .arg("--username")
+                    .arg(options.username)
+                    .arg("--version")
+                    .arg(options.version)
+                    .arg("--gameDir")
+                    .arg(&instance_dir)
+                    .arg("--assetsDir")
+                    .arg(&prepared.assets_dir)
+                    .arg("--assetIndex")
+                    .arg(&prepared.asset_index)
+                    .arg("--uuid")
+                    .arg(offline_uuid(options.username))
+                    .arg("--accessToken")
+                    .arg("0")
+                    .arg("--userType")
+                    .arg("legacy");
+            }
+        }
 
         // Joining a friend's world: point the client straight at the local
         // authenticated proxy instead of the main menu.
@@ -520,12 +641,32 @@ fn pump(reader: impl Read + Send + 'static, core: std::sync::Arc<Core>) {
 }
 
 fn rules_allow(rules: &[Rule], os_name: &str) -> bool {
+    rules_allow_with(rules, os_name, &std::collections::HashMap::new())
+}
+
+/// A rule with `features` only matches when every listed feature equals the
+/// current ones (we enable none: no demo user, no custom resolution…).
+fn rules_allow_with(
+    rules: &[Rule],
+    os_name: &str,
+    features: &std::collections::HashMap<String, bool>,
+) -> bool {
     if rules.is_empty() {
         return true;
     }
     let mut allowed = false;
     for rule in rules {
-        let matches = match &rule.os {
+        let features_match = rule
+            .features
+            .as_ref()
+            .map(|required| {
+                required.iter().all(|(name, expected)| {
+                    features.get(name).copied().unwrap_or(false) == *expected
+                })
+            })
+            .unwrap_or(true);
+        let matches = features_match
+            && match &rule.os {
             None => true,
             Some(os) => {
                 let name_matches = os.name.is_empty() || os.name == os_name
@@ -699,9 +840,15 @@ fn loader_profile(core: &Core, version_id: &str) -> Result<Option<(VersionJson, 
         parsed
     };
 
-    // Loader libraries first, then the base version. Fabric refuses to start
-    // when the same artifact appears twice with different versions (ASM), so
-    // the loader's copy wins and the base duplicate is dropped.
+    let (merged, base_id) = merge_with_base(core, profile, &base_id)?;
+    Ok(Some((merged, base_id)))
+}
+
+/// Merge a loader profile (`inheritsFrom`) with its base version: the loader's
+/// main class and libraries win, duplicates are dropped (Fabric refuses two ASM
+/// versions), and the base supplies assets, jar and the fallbacks.
+fn merge_with_base(core: &Core, profile: VersionJson, base_id: &str) -> Result<(VersionJson, String)> {
+    let base = load_version_json(core, base_id)?;
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut libraries: Vec<Library> = Vec::new();
     for library in profile.libraries.into_iter().chain(base.libraries) {
@@ -712,18 +859,100 @@ fn loader_profile(core: &Core, version_id: &str) -> Result<Option<(VersionJson, 
         }
         libraries.push(library);
     }
-
-    Ok(Some((VersionJson {
-        id: version_id.to_string(),
-        main_class: if profile.main_class.is_empty() {
-            base.main_class
-        } else {
-            profile.main_class
+    let id = profile.id.clone();
+    let arguments = match (base.arguments, profile.arguments) {
+        (None, None) => None,
+        (base_args, profile_args) => {
+            let mut merged = Arguments::default();
+            if let Some(base_args) = base_args {
+                merged.jvm.extend(base_args.jvm);
+                merged.game.extend(base_args.game);
+            }
+            if let Some(profile_args) = profile_args {
+                merged.jvm.extend(profile_args.jvm);
+                merged.game.extend(profile_args.game);
+            }
+            Some(merged)
+        }
+    };
+    Ok((
+        VersionJson {
+            id,
+            arguments,
+            main_class: if profile.main_class.is_empty() {
+                base.main_class
+            } else {
+                profile.main_class
+            },
+            inherits_from: None,
+            libraries,
+            asset_index: base.asset_index,
+            downloads: base.downloads,
+            java_version: base.java_version,
         },
-        inherits_from: None,
-        libraries,
-        asset_index: base.asset_index,
-        downloads: base.downloads,
-        java_version: base.java_version,
-    }, base_id)))
+        base_id.to_string(),
+    ))
+}
+
+/// Read a version JSON from disk, fetching it from Mojang when missing.
+fn load_version_json(core: &Core, version_id: &str) -> Result<VersionJson> {
+    let path = core
+        .mc_dir
+        .join("versions")
+        .join(version_id)
+        .join(format!("{version_id}.json"));
+    if path.exists() {
+        return Ok(serde_json::from_str(&fs::read_to_string(&path)?)?);
+    }
+    let manifest: serde_json::Value = core.fetch_json(MANIFEST_URL)?;
+    let url = manifest["versions"]
+        .as_array()
+        .and_then(|versions| {
+            versions
+                .iter()
+                .find(|entry| entry.get("id").and_then(|id| id.as_str()) == Some(version_id))
+        })
+        .and_then(|entry| entry.get("url"))
+        .and_then(|url| url.as_str())
+        .ok_or_else(|| anyhow!("Sürüm bulunamadı: {version_id}"))?;
+    let parsed: VersionJson = core.fetch_json(url)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, serde_json::to_vec_pretty(&parsed)?)?;
+    Ok(parsed)
+}
+
+/// Expand a profile's `arguments.jvm` / `arguments.game` list, honouring rules
+/// and `${placeholder}` substitutions.
+fn expand_args(
+    entries: &[ArgEntry],
+    vars: &std::collections::HashMap<&str, String>,
+    os_name: &str,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for entry in entries {
+        match entry {
+            ArgEntry::Plain(text) => out.push(substitute(text, vars)),
+            ArgEntry::Conditional { rules, value } => {
+                if rules_allow(rules, os_name) {
+                    match value {
+                        ArgValue::One(text) => out.push(substitute(text, vars)),
+                        ArgValue::Many(list) => {
+                            out.extend(list.iter().map(|text| substitute(text, vars)))
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn substitute(text: &str, vars: &std::collections::HashMap<&str, String>) -> String {
+    let mut out = text.to_string();
+    for (key, value) in vars {
+        out = out.replace(&format!("${{{key}}}"), value);
+    }
+    out
 }

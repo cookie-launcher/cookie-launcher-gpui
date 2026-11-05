@@ -150,12 +150,6 @@ impl Core {
         loader: &str,
         icon: &str,
     ) -> Result<Instance> {
-        if matches!(loader.to_lowercase().as_str(), "forge" | "neoforge") {
-            return Err(anyhow!(
-                "{} yükleyicisi bu sürümde desteklenmiyor; vanilla veya Fabric/Quilt seçin.",
-                loader
-            ));
-        }
         let name = name.trim();
         if name.is_empty() {
             return Err(anyhow!("Geçersiz profil adı."));
@@ -760,12 +754,125 @@ impl Core {
                     instance.version
                 ))
             }
-            "forge" | "neoforge" => Err(anyhow!(
-                "{} bu sürümde desteklenmiyor; vanilla veya Fabric kullanın.",
-                instance.loader
-            )),
+            "forge" | "neoforge" => self.ensure_forge_family(instance),
             _ => Ok(instance.version.clone()),
         }
+    }
+
+    /// Forge/NeoForge: run the official installer once, then launch the profile
+    /// it writes (`<mc>-forge-<ver>` / `neoforge-<ver>`).
+    pub fn ensure_forge_family(&self, instance: &Instance) -> Result<String> {
+        let loader = instance.loader.to_lowercase();
+        let mc = instance.version.clone();
+        let loader_version = if instance.loader_version.is_empty() {
+            self.recommended_forge_version(&loader, &mc)?
+        } else {
+            instance.loader_version.clone()
+        };
+
+        let id = if loader == "neoforge" {
+            format!("neoforge-{loader_version}")
+        } else {
+            format!("{mc}-forge-{loader_version}")
+        };
+        let json_path = self
+            .mc_dir
+            .join("versions")
+            .join(&id)
+            .join(format!("{id}.json"));
+        if json_path.exists() {
+            return Ok(id);
+        }
+
+        let url = if loader == "neoforge" {
+            format!(
+                "https://maven.neoforged.net/releases/net/neoforged/neoforge/{v}/neoforge-{v}-installer.jar",
+                v = loader_version
+            )
+        } else {
+            format!(
+                "https://maven.minecraftforge.net/net/minecraftforge/forge/{mc}-{v}/forge-{mc}-{v}-installer.jar",
+                v = loader_version
+            )
+        };
+        let dir = self.data_dir.join("installers");
+        let _ = fs::create_dir_all(&dir);
+        let installer = dir.join(format!("{id}-installer.jar"));
+        self.set_status(|status| {
+            status.is_installing = true;
+            status.percent = 5;
+            status.status = format!("{} kuruluyor…", loader.to_uppercase());
+            status.detail = loader_version.clone();
+        });
+        self.log(format!("{loader} yükleyicisi indiriliyor ({loader_version})…"));
+        self.download_to(&url, &installer)?;
+
+        self.log("Yükleyici çalıştırılıyor (java -jar … --installClient)…".to_string());
+        let output = Command::new("java")
+            .arg("-jar")
+            .arg(&installer)
+            .arg("--installClient")
+            .arg(&self.mc_dir)
+            .output()
+            .map_err(|e| anyhow!("Yükleyici çalıştırılamadı: {e}"))?;
+        if !output.status.success() {
+            let tail = String::from_utf8_lossy(&output.stdout);
+            let tail = tail.lines().rev().take(3).collect::<Vec<_>>().join(" | ");
+            return Err(anyhow!("{loader} kurulumu başarısız: {tail}"));
+        }
+        if !json_path.exists() {
+            return Err(anyhow!(
+                "{loader} kurulumu bitti ama {} bulunamadı.",
+                json_path.display()
+            ));
+        }
+        self.set_status(|status| {
+            status.is_installing = false;
+            status.percent = 0;
+            status.status = "Hazır".to_string();
+            status.detail = String::new();
+        });
+        self.log(format!("{loader} hazır: {id}"));
+        Ok(id)
+    }
+
+    fn recommended_forge_version(&self, loader: &str, mc: &str) -> Result<String> {
+        if loader == "neoforge" {
+            // NeoForge versions track the game: 1.21.4 -> 21.4.x
+            let prefix = mc.strip_prefix("1.").unwrap_or(mc).to_string();
+            let prefix = format!("{prefix}.");
+            #[derive(Deserialize)]
+            struct Versions {
+                #[serde(default)]
+                versions: Vec<String>,
+            }
+            let data: Versions = self.fetch_json(
+                "https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge",
+            )?;
+            let mut matching: Vec<String> = data
+                .versions
+                .into_iter()
+                .filter(|version| version.starts_with(&prefix) && !version.contains("-beta"))
+                .collect();
+            matching.sort();
+            return matching
+                .last()
+                .cloned()
+                .ok_or_else(|| anyhow!("NeoForge {mc} sürümü bulunamadı"));
+        }
+
+        #[derive(Deserialize)]
+        struct Promotions {
+            #[serde(default)]
+            promos: std::collections::HashMap<String, String>,
+        }
+        let data: Promotions =
+            self.fetch_json("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json")?;
+        data.promos
+            .get(&format!("{mc}-recommended"))
+            .or_else(|| data.promos.get(&format!("{mc}-latest")))
+            .cloned()
+            .ok_or_else(|| anyhow!("Forge {mc} sürümü bulunamadı"))
     }
 
     fn recommended_loader_version(&self, loader: &str, mc: &str) -> Result<String> {
@@ -1564,11 +1671,20 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_loaders() {
+    fn accepts_every_supported_loader() {
         let core = temp_core("loaders");
-        assert!(core.create_instance("Forge Denedim", "1.20.1", "forge", "").is_err());
-        assert!(core.create_instance("Neo Denedim", "1.20.1", "neoforge", "").is_err());
-        assert!(core.create_instance("Fabric Oldu", "1.20.1", "fabric", "").is_ok());
+        for (index, loader) in ["vanilla", "fabric", "quilt", "forge", "neoforge"]
+            .into_iter()
+            .enumerate()
+        {
+            let created = core.create_instance(
+                &format!("Profil {index}"),
+                "1.20.1",
+                loader,
+                "",
+            );
+            assert!(created.is_ok(), "{loader} profili oluşturulabilmeli");
+        }
     }
 
     #[test]
