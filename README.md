@@ -124,13 +124,14 @@ Her biri gerçek uzak servislerle çalışır, çıktısı yukarıdaki test turu
 ## Geliştirme yardımcıları
 
 ```bash
-scripts/capture.sh cikti.png        # pencereyi öne getirmeden yakalar (KWin)
-scripts/tab.sh modrinth cikti.png   # sekmeyi seçip yakalar
+cargo run -p xtask -- capture cikti.png      # pencereyi öne getirmeden yakalar
+cargo run -p xtask -- tab modrinth cikti.png # sekmeyi seçip yakalar
 cargo run -- --versions-probe       # 922 sürümü doğrular
 cargo run -- --loader-probe 1.21.4 fabric
 cargo run -- --launch-probe 1.21.4  # gerçek Minecraft başlatır
 cargo run -- --modpack-probe fabulously-optimized
 cargo run -- --relay-probe          # paylaş+katıl zincirini test eder
+cargo run -- --install-probe sodium mod   # tek mod + bağımlılık kurulumu
 ```
 
 Ekran görüntüleri `docs/` altında.
