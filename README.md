@@ -1,0 +1,100 @@
+# Cookie Launcher — GPUI (100% Rust)
+
+`cookie-launcher-tauri`'nin **tamamen Rust** istemcisi. Webview yok, Python yok,
+localhost HTTP yok: arayüz GPUI ile çizilir, çekirdek (indirme, kurulum,
+başlatma, sosyal tünel) doğrudan Rust içinde çalışır.
+
+```
+cookie-launcher-gpui (tek binary)
+├── arayüz      : GPUI + gpui-kit, Cocoa Craft tasarım sistemi
+└── çekirdek    : src/core.rs · launch.rs · social.rs · relay.rs
+                  └── Mojang / Modrinth / bore.pub
+```
+
+Eski Tauri/Python çekirdeği tamamen kaldırıldı; `backend.rs` (Python
+süpervizörü) silindi, yerine Rust modülleri geldi.
+
+## Çalıştırma
+
+```bash
+cargo run                 # normal
+CL_TAB=modrinth cargo run # belirli sekmede aç
+```
+
+İlk derleme GPUI'den dolayı uzun (~3-4 dk), sonrası artımlı.
+
+## Çekirdek (hepsi Rust)
+
+| Alan | Nerede | Durum |
+| --- | --- | --- |
+| Profil CRUD (`instances/<id>/instance.json`) | `core.rs` | ✅ |
+| Dünyalar, içerik listeleme/toggle/silme | `core.rs` | ✅ |
+| Mojang sürüm manifesti (922 sürüm, disk cache) | `core.rs` | ✅ |
+| Vanilla launch: jar + kütüphaneler + natives + assetler + JVM | `launch.rs` | ✅ doğrulandı |
+| **Fabric / Quilt** profili (`inheritsFrom` birleştirme, ASM dedupe) | `launch.rs` | ✅ doğrulandı |
+| Forge / NeoForge | — | ❌ açık hata veriyor |
+| Modrinth arama (sürüm + yükleyici facet'li) | `core.rs` | ✅ |
+| Modrinth kurulum (jar + bağımlılık) | `core.rs` | ✅ |
+| **Modpack kurulumu** (`.mrpack` → profil) | `core.rs` | ✅ doğrulandı (47 mod) |
+| Ekran görüntüleri (gerçek thumbnail) | `core.rs` + UI | ✅ |
+| Log halkası (1000 satır) + durum | `core.rs` | ✅ |
+| **Arkadaşlar**: bore.pub tüneli + CLT1 HMAC el sıkışması | `social.rs` + `relay.rs` | ✅ doğrulandı |
+
+### Arkadaşlar akışı
+
+1. **Paylaş** → yerel relay (CLT1 korumalı) + `bore.pub` tüneli → `CL1-…` kodu
+   (relay adresi, ticket ve token kodun içinde)
+2. **Katıl** → kod çözülür, yerel authenticated proxy açılır, oyun
+   `--quickPlayMultiplayer 127.0.0.1:<port>` ile doğrudan arkadaşın dünyasına girer
+3. Token kablodan geçmez: tek kullanımlık nonce'un HMAC-SHA256 yanıtı gider,
+   yanlış token / replay reddedilir
+
+## Tasarım sistemi
+
+- `assets/theme/cocoa-craft.json` — 128 renk anahtarı, radius 5/8, gölge yok
+- `assets/fonts/` — Plus Jakarta Sans + JetBrains Mono (statik 400–700) + Silkscreen
+- `theme.rs` → `Cocoa`: temanın adı olmayan roller (karamel wash, cream `--paper`,
+  chrome, launch gradyanı)
+- Ölçüler kaynakla aynı: titlebar 44, rail 218, nav 44, buton 34, input 38,
+  launch 196×52, radius 3/5/8/10
+
+## Animasyonlar (CSS süreleriyle)
+
+| Efekt | Süre | Nerede |
+| --- | --- | --- |
+| Sekme geçişi fade | 140 ms | tüm sekmeler |
+| Nav / kart hover (bg+border) | 120 ms `ease` | rail, profil ve mod kartları |
+| Toast girişi (fade + 10 px kayma) | 160 ms | bildirim |
+| Skeleton shimmer | 1.4 s döngü | Modrinth yükleme |
+| Meşgul durum nabzı | 1.6 s döngü | rail durum noktası |
+| Launch butonu basışı (`translateY(2px)`) | 80 ms | karamel buton |
+
+`widgets.rs` → `MotionExt` (fade_bg / fade_border / fade_card / shimmer / pulse /
+press) ve `ease` = cubic-bezier(0.25, 0.1, 0.25, 1) yaklaşımı.
+
+## Klavye
+
+`Ctrl+1…6` sekmeler · `Ctrl+K` arama · `Ctrl+Enter` başlat · `?` kısayollar
+penceresi. GPUI `actions!` + `cx.bind_keys` + kök `key_context("Launcher")`.
+
+## Samimi olarak eksik olanlar
+
+- **Profil detay ekranı** (`pds-*`): içerik/sürüm/dünya/log/not sekmeleri
+- Forge / NeoForge kurulumu (şu an net hata)
+- Modpack içeriğini sonradan güncelleme
+- `Noise_XX` uçtan uca şifreleme (CLT1 kimlik doğrulama var, taşıma şifrelemesi yok)
+- Uygulama ikonu / paketleme (AppImage, deb, .desktop)
+
+## Geliştirme yardımcıları
+
+```bash
+scripts/capture.sh cikti.png        # pencereyi öne getirmeden yakalar (KWin)
+scripts/tab.sh modrinth cikti.png   # sekmeyi seçip yakalar
+cargo run -- --versions-probe       # 922 sürümü doğrular
+cargo run -- --loader-probe 1.21.4 fabric
+cargo run -- --launch-probe 1.21.4  # gerçek Minecraft başlatır
+cargo run -- --modpack-probe fabulously-optimized
+cargo run -- --relay-probe          # paylaş+katıl zincirini test eder
+```
+
+Ekran görüntüleri `docs/` altında.
