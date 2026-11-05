@@ -304,6 +304,16 @@ impl AppView {
         view
     }
 
+    /// Test constructor: skips the network boot so a headless window only
+    /// exercises the interaction paths.
+    #[cfg(test)]
+    pub fn test_view(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut view = Self::new(window, cx);
+        view.booted = true;
+        view.connection = Connection::Ready(0);
+        view
+    }
+
     // -- lifecycle ---------------------------------------------------------
 
     pub fn boot(&mut self, cx: &mut Context<Self>) {
@@ -336,12 +346,18 @@ impl AppView {
                     .timer(Duration::from_millis(2500))
                     .await;
                 let _ = this.update_in(cx, |this, window, cx| {
-                    match action.as_str() {
-                        "modrinth" => window.dispatch_action(Box::new(GoModrinth), cx),
-                        "friends" => window.dispatch_action(Box::new(GoFriends), cx),
-                        "console" => window.dispatch_action(Box::new(GoConsole), cx),
-                        "shortcuts" => window.dispatch_action(Box::new(ShowShortcuts), cx),
-                        _ => {}
+                    for name in action.split(',') {
+                        match name.trim() {
+                            "play" => window.dispatch_action(Box::new(GoPlay), cx),
+                            "instances" => window.dispatch_action(Box::new(GoInstances), cx),
+                            "modrinth" => window.dispatch_action(Box::new(GoModrinth), cx),
+                            "gallery" => window.dispatch_action(Box::new(GoGallery), cx),
+                            "console" => window.dispatch_action(Box::new(GoConsole), cx),
+                            "friends" => window.dispatch_action(Box::new(GoFriends), cx),
+                            "search" => window.dispatch_action(Box::new(FocusSearch), cx),
+                            "shortcuts" => window.dispatch_action(Box::new(ShowShortcuts), cx),
+                            _ => {}
+                        }
                     }
                     cx.notify();
                     let _ = this;

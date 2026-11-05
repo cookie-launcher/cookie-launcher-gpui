@@ -40,9 +40,12 @@ pub struct Core {
 
 impl Core {
     pub fn new() -> Arc<Self> {
-        let mc_dir = minecraft_dir();
+        Core::with_paths(minecraft_dir(), data_dir())
+    }
+
+    /// Explicit roots — used by tests so they never touch `~/.minecraft`.
+    pub fn with_paths(mc_dir: PathBuf, data_dir: PathBuf) -> Arc<Self> {
         let instances_dir = mc_dir.join("instances");
-        let data_dir = data_dir();
         let _ = fs::create_dir_all(&instances_dir);
         let _ = fs::create_dir_all(&data_dir);
 
@@ -339,14 +342,21 @@ impl Core {
     }
 
     pub fn open_folder(&self, sub: &str) -> Result<()> {
+        let relative = Path::new(sub);
+        // `Path::starts_with` compares components, so `mc/../etc` would pass a
+        // naive prefix check. Reject the escape at the source instead.
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(anyhow!("Geçersiz klasör yolu."));
+        }
         let target = if sub.is_empty() {
             self.mc_dir.clone()
         } else {
-            self.mc_dir.join(sub)
+            self.mc_dir.join(relative)
         };
-        if !target.starts_with(&self.mc_dir) {
-            return Err(anyhow!("Geçersiz klasör yolu."));
-        }
         let _ = fs::create_dir_all(&target);
         open_path(&target)?;
         Ok(())
@@ -1474,5 +1484,141 @@ fn copy_dir(from: &Path, to: &Path) {
             }
             let _ = fs::copy(&path, &target);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_core(tag: &str) -> Arc<Core> {
+        let base = std::env::temp_dir().join(format!(
+            "cl-test-{tag}-{}-{}",
+            std::process::id(),
+            now_epoch()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        Core::with_paths(base.join("mc"), base.join("data"))
+    }
+
+    #[test]
+    fn creates_lists_and_deletes_a_profile() {
+        let core = temp_core("instances");
+        assert!(core.instances().is_empty());
+
+        let instance = core
+            .create_instance("My Pack", "1.21.4", "fabric", "")
+            .expect("create");
+        assert_eq!(instance.id, "my_pack");
+        assert_eq!(instance.name, "My Pack");
+        assert_eq!(instance.loader, "fabric");
+        assert!(core.instance_dir("my_pack").join("mods").is_dir());
+        assert_eq!(core.instances().len(), 1);
+
+        // Duplicate names are rejected rather than silently overwritten.
+        assert!(core.create_instance("My Pack", "1.21.4", "fabric", "").is_err());
+
+        core.delete_instance("my_pack").expect("delete");
+        assert!(core.instances().is_empty());
+        assert!(!core.instance_dir("my_pack").exists());
+    }
+
+    #[test]
+    fn slugifies_names_and_avoids_collisions() {
+        let core = temp_core("slug");
+        let first = core.create_instance("Çok Güzel Profil!", "1.21.4", "vanilla", "").unwrap();
+        let second = core.create_instance("Çok Güzel Profil!", "1.21.4", "vanilla", "");
+        assert!(!first.id.contains(' ') && !first.id.contains('!'));
+        assert!(first.id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-'));
+        assert!(second.is_err(), "aynı isim reddedilmeli");
+        let third = core.create_instance("Bambaşka", "1.21.4", "vanilla", "").unwrap();
+        assert_ne!(first.id, third.id);
+    }
+
+    #[test]
+    fn rejects_unsupported_loaders() {
+        let core = temp_core("loaders");
+        assert!(core.create_instance("Forge Denedim", "1.20.1", "forge", "").is_err());
+        assert!(core.create_instance("Neo Denedim", "1.20.1", "neoforge", "").is_err());
+        assert!(core.create_instance("Fabric Oldu", "1.20.1", "fabric", "").is_ok());
+    }
+
+    #[test]
+    fn lists_toggles_and_deletes_installed_content() {
+        let core = temp_core("content");
+        core.create_instance("Modlu", "1.21.4", "fabric", "").unwrap();
+        let mods = core.instance_dir("modlu").join("mods");
+        fs::write(mods.join("sodium.jar"), b"jar").unwrap();
+        fs::write(mods.join("lithium.jar"), b"jar").unwrap();
+
+        let entries = core.content("modlu", "mod");
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|entry| entry.enabled));
+        assert_eq!(core.content_counts("modlu"), [2, 0, 0]);
+
+        // Disabling renames to `.disabled` and keeps the entry listed.
+        core.toggle_content("modlu", "mod", "sodium.jar").unwrap();
+        let entries = core.content("modlu", "mod");
+        assert!(entries
+            .iter()
+            .any(|entry| entry.name == "sodium.jar.disabled" && !entry.enabled));
+        // Re-enabling restores the original name.
+        core.toggle_content("modlu", "mod", "sodium.jar.disabled").unwrap();
+        assert!(mods.join("sodium.jar").exists());
+
+        core.delete_content("modlu", "mod", "lithium.jar").unwrap();
+        assert_eq!(core.content("modlu", "mod").len(), 1);
+    }
+
+    #[test]
+    fn reads_worlds_and_screenshots_from_disk() {
+        let core = temp_core("worlds");
+        core.create_instance("Dünya Profili", "1.21.4", "vanilla", "").unwrap();
+        let saves = core.instance_dir("dunya_profili").join("saves");
+        let world = saves.join("Kayıp Şehir");
+        fs::create_dir_all(&world).unwrap();
+        fs::write(world.join("level.dat"), vec![0u8; 1_600_000]).unwrap();
+
+        let worlds = core.worlds("dunya_profili");
+        assert_eq!(worlds.len(), 1);
+        assert_eq!(worlds[0].name, "Kayıp Şehir");
+        assert!(worlds[0].size_mb > 0.0);
+        assert!(!worlds[0].last_played.is_empty());
+
+        let shots_dir = core.mc_dir.join("screenshots");
+        fs::create_dir_all(&shots_dir).unwrap();
+        fs::write(shots_dir.join("2026-01-01_10.00.00.png"), vec![0u8; 512]).unwrap();
+        fs::write(shots_dir.join("not-a-screenshot.txt"), b"x").unwrap();
+        let shots = core.screenshots();
+        assert_eq!(shots.len(), 1, "sadece png listelenmeli");
+        assert_eq!(shots[0].size, 512);
+        assert_eq!(core.screenshot_bytes("2026-01-01_10.00.00.png").unwrap().len(), 512);
+    }
+
+    #[test]
+    fn effective_version_resolves_fabric_and_rejects_forge() {
+        let core = temp_core("versions");
+        let mut instance = Instance {
+            id: "x".into(),
+            version: "1.21.4".into(),
+            loader: "fabric".into(),
+            loader_version: "0.16.9".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            core.effective_version(&instance).unwrap(),
+            "fabric-loader-0.16.9-1.21.4"
+        );
+        instance.loader = "vanilla".into();
+        assert_eq!(core.effective_version(&instance).unwrap(), "1.21.4");
+        instance.loader = "forge".into();
+        assert!(core.effective_version(&instance).is_err());
+    }
+
+    #[test]
+    fn open_folder_rejects_escaping_paths() {
+        let core = temp_core("folders");
+        assert!(core.open_folder("../etc").is_err());
+        assert!(core.open_folder("/etc").is_err());
     }
 }

@@ -85,6 +85,42 @@ penceresi. GPUI `actions!` + `cx.bind_keys` + kök `key_context("Launcher")`.
 - `Noise_XX` uçtan uca şifreleme (CLT1 kimlik doğrulama var, taşıma şifrelemesi yok)
 - Uygulama ikonu / paketleme (AppImage, deb, .desktop)
 
+## Testler
+
+`cargo test` — 13 test, ağ gerektirmez:
+
+| Test | Neyi doğrular |
+| --- | --- |
+| `creates_lists_and_deletes_a_profile` | profil CRUD, `mods/` oluşturma, aynı ismin reddi |
+| `slugifies_names_and_avoids_collisions` | id üretimi, çakışma |
+| `rejects_unsupported_loaders` | Forge/NeoForge reddi, Fabric kabulü |
+| `lists_toggles_and_deletes_installed_content` | `.disabled` çevirme, silme, sayaçlar |
+| `reads_worlds_and_screenshots_from_disk` | dünya boyutu/tarihi, sadece PNG listeleme |
+| `effective_version_resolves_fabric_and_rejects_forge` | `fabric-loader-x-y` çözümü |
+| `open_folder_rejects_escaping_paths` | `../` ve mutlak yol reddi |
+| `mac_is_deterministic_and_role_bound` | CLT1 MAC rol ayrımı |
+| `hex_roundtrip` | ticket kodlaması |
+| `handshake_accepts_guest_and_rejects_replay` | gerçek TCP el sıkışması + replay reddi |
+| `short_code_roundtrip` / `long_code_roundtrip` / `transport_links_are_normalized` | CL1 kodek |
+
+`open_folder` testi yazılırken gerçek bir açık bulundu: `mc/../etc` gibi bir yol
+`Path::starts_with` kontrolünü geçiyordu. Artık mutlak yollar ve `..` bileşenleri
+kaynakta reddediliyor.
+
+### Canlı doğrulamalar (ağ gerekir)
+
+Her biri gerçek uzak servislerle çalışır, çıktısı yukarıdaki test turunda alındı:
+
+| Komut | Sonuç |
+| --- | --- |
+| `--versions-probe` | 922 Mojang sürümü |
+| `--search-probe 1.7.10-pre1 vanilla` | 1.7.10 modları (Zume, SpeedRunIGT…) |
+| `--search-probe 1.21.11 fabric` | Fabric API, Sodium |
+| `--install-probe sodium mod` | `sodium-fabric-0.6.13+mc1.21.4.jar` kuruldu |
+| `--modpack-probe fabulously-optimized` | 49 dosya, **47 mod** |
+| `--launch-probe 1.21.4` | oyun açıldı (`running=true`, 71 classpath) |
+| `--relay-probe` | paylaş → katıl → `JOIN OK` |
+
 ## Geliştirme yardımcıları
 
 ```bash

@@ -138,6 +138,31 @@ fn main() {
     }
 
     // `--search-probe <mc> <loader> <query>`: verify the Modrinth facets.
+    // `--install-probe <slug> [mod|shader|resourcepack]` downloads a project
+    // and its dependencies into a throwaway profile.
+    if std::env::args().any(|arg| arg == "--install-probe") {
+        let args: Vec<String> = std::env::args().collect();
+        let pos = args.iter().position(|a| a == "--install-probe").unwrap_or(0);
+        let slug = args.get(pos + 1).cloned().unwrap_or_default();
+        let kind = args.get(pos + 2).cloned().unwrap_or_else(|| "mod".to_string());
+        let core = core::Core::new();
+        let instance = core
+            .create_instance("Install Probe", "1.21.4", "fabric", "")
+            .expect("profile");
+        match core.install(&slug, &instance.id, &kind, true) {
+            Ok(files) => {
+                let mods = core.content(&instance.id, "mod");
+                println!("INSTALLED {slug}: {} dosya, {} mod", files.len(), mods.len());
+                for file in mods.iter().take(6) {
+                    println!("  {} enabled={}", file.name, file.enabled);
+                }
+        let _ = core.delete_instance(&instance.id);
+            }
+            Err(error) => println!("INSTALL FAILED: {error}"),
+        }
+        return;
+    }
+
     if let Some(slug) = std::env::args()
         .skip_while(|arg| arg != "--modpack-probe")
         .nth(1)
