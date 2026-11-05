@@ -24,6 +24,7 @@ impl AppView {
     ) -> AnyElement {
         let cocoa = Cocoa::get(cx).clone_shades();
         let social = self.social.clone();
+        let lan_worlds = self.lan_worlds.clone();
         let connected = social.connected;
         let name = social.display_name();
         let code = social.code();
@@ -210,6 +211,94 @@ impl AppView {
             panel
         };
 
+        let lan_panel = {
+            let mut panel = v_flex()
+                .w_full()
+                .gap_2()
+                .p_4()
+                .rounded(px(RADIUS_SURFACE))
+                .bg(cocoa.surface_1)
+                .border_1()
+                .border_color(cocoa.line)
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_size(px(14.5))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(cx.theme().foreground)
+                                .child("LAN dünyaları"),
+                        )
+                        .child(chip(
+                            if lan_worlds.is_empty() {
+                                "yok".to_string()
+                            } else {
+                                format!("{} bulundu", lan_worlds.len())
+                            },
+                            if lan_worlds.is_empty() {
+                                ChipTone::Neutral
+                            } else {
+                                ChipTone::Amber
+                            },
+                            cx,
+                        )),
+                );
+            if lan_worlds.is_empty() {
+                panel = panel.child(
+                    div()
+                        .text_size(TEXT_11)
+                        .text_color(cocoa.text_3)
+                        .child("Oyun içinde bir dünya aç ve Esc → “LAN'a Aç” de; burada görünür."),
+                );
+            }
+            for world in &lan_worlds {
+                let port = world.port;
+                let name = world.motd.clone();
+                panel = panel.child(
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .gap_3()
+                        .px_2()
+                        .py_1()
+                        .rounded(px(5.))
+                        .bg(cocoa.surface_2)
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(
+                                    div()
+                                        .text_size(TEXT_12)
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(cocoa.text_2)
+                                        .truncate()
+                                        .child(world.label()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(TEXT_10)
+                                        .font_family("JetBrains Mono")
+                                        .text_color(cocoa.text_3)
+                                        .child(format!("{}:{}", world.address, world.port)),
+                                ),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("lan-share-{port}")))
+                                .xsmall()
+                                .outline()
+                                .label("Paylaş")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.share_lan_world(port, name.clone(), cx)
+                                })),
+                        ),
+                );
+            }
+            panel
+        };
+
         let add_row = h_flex()
             .w_full()
             .items_center()
@@ -330,18 +419,24 @@ impl AppView {
             .child(header)
             .child(identity)
             .child(share_panel)
+            .child(lan_panel)
             .child(add_row)
             .child(body)
             .into_any_element()
     }
 
     pub(crate) fn start_sharing(&mut self, cx: &mut Context<Self>) {
-        let port = 25565u16;
-        let world = self
-            .worlds
-            .first()
-            .map(|w| w.name.clone())
-            .unwrap_or_else(|| "Dünya".to_string());
+        match self.lan_worlds.first().cloned() {
+            Some(world) => self.share_lan_world(world.port, world.motd.clone(), cx),
+            None => self.toast(
+                "Önce oyunda dünyayı LAN'a aç: Esc → “LAN'a Aç”.",
+                ToastKind::Info,
+                cx,
+            ),
+        }
+    }
+
+    pub(crate) fn share_lan_world(&mut self, port: u16, world: String, cx: &mut Context<Self>) {
         self.request(
             cx,
             move |core| core.share_world(port, &world),

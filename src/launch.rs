@@ -399,6 +399,13 @@ impl Core {
 
         let ram = options.ram_gb.clamp(2, 64);
 
+        // Offline accounts cannot complete the encryption handshake, so every
+        // server.properties is forced to online-mode=false before launch.
+        let changed = self.ensure_offline_properties();
+        if changed > 0 {
+            self.log(format!("LAN uyumu: {changed} server.properties güncellendi"));
+        }
+
         // "Cookie optimizasyonu": FullBright in the instance's options.txt and
         // Aikar's GC flags. Both are observable, not cosmetic.
         if options.cookie_optimized {

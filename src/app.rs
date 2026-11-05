@@ -167,6 +167,8 @@ pub struct AppView {
     /// Modrinth slugs already installed in the active profile, used by the
     /// "hide downloaded" filter.
     pub installed_slugs: std::collections::HashSet<String>,
+    /// Worlds the game is broadcasting on the LAN right now.
+    pub lan_worlds: Vec<crate::core::LanWorld>,
     /// Scroll position of the content centre, reset when results change.
     pub modrinth_scroll: ScrollHandle,
     pub root_focus: FocusHandle,
@@ -289,6 +291,7 @@ impl AppView {
             content_items: Vec::new(),
             content_counts: [0; 3],
             installed_slugs: std::collections::HashSet::new(),
+            lan_worlds: Vec::new(),
             modrinth_scroll: ScrollHandle::new(),
             root_focus: cx.focus_handle(),
             installing_slug: None,
@@ -450,7 +453,9 @@ impl AppView {
                     let social = if want_social && this.tab == Tab::Friends {
                         Some(cx.background_spawn({
                             let core = core.clone();
-                            async move { core.social_state().ok() }
+                            // Poll the LAN scanner too: worlds appear and expire
+                            // while the tab stays open.
+                            async move { (core.social_state().ok(), core.lan_worlds()) }
                         }))
                     } else {
                         None
@@ -471,11 +476,12 @@ impl AppView {
                     }
                 }
                 if let Some(task) = tasks.2 {
-                    let social = task.await;
+                    let (social, lan) = task.await;
                     if this.update(cx, |this, cx| {
                         if let Some(social) = social {
                             this.social = social;
                         }
+                        this.lan_worlds = lan;
                         cx.notify();
                     }).is_err() {
                         break;
@@ -644,11 +650,12 @@ impl AppView {
     pub fn refresh_social(&mut self, cx: &mut Context<Self>) {
         self.request(
             cx,
-            |core| core.social_state(),
-            |this, result, cx| {
-                if let Ok(social) = result {
+            |core| (core.social_state(), core.lan_worlds()),
+            |this, (social, lan), cx| {
+                if let Ok(social) = social {
                     this.social = social;
                 }
+                this.lan_worlds = lan;
                 cx.notify();
             },
         );

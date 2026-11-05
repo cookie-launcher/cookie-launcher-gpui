@@ -194,6 +194,93 @@ fn main() {
         return;
     }
 
+    // `--lan-share-probe` proves the whole chain: discover a LAN world, share
+    // that exact port through bore, join it back and read the payload.
+    if std::env::args().any(|arg| arg == "--lan-share-probe") {
+        use std::io::{Read, Write};
+        let core = core::Core::new();
+        let (echo_port, _) = social::local_echo().expect("echo");
+        println!("sahte dünya sunucusu: 127.0.0.1:{echo_port}");
+
+        // Start the scanner before broadcasting, exactly like the app does at
+        // boot; otherwise the packet arrives before anything is listening.
+        let _ = core.lan_worlds();
+        let udp = std::net::UdpSocket::bind("127.0.0.1:0").expect("udp");
+        let packet = format!("[MOTD]Probe Dünyası[/MOTD][AD]{echo_port}[/AD]");
+        let _ = udp.send_to(packet.as_bytes(), ("127.0.0.1", 4445));
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        let worlds = core.lan_worlds();
+        println!("keşfedilen dünya: {} adet", worlds.len());
+        let Some(world) = worlds.first().cloned() else {
+            println!("LAN DÜNYASI BULUNAMADI");
+            return;
+        };
+        println!("hedef port: {}", world.port);
+
+        match core.share_world(world.port, &world.motd) {
+            Ok(code) => {
+                println!("kod üretildi (len {})", code.len());
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                match core.join_invite(&code) {
+                    Ok(address) => {
+                        std::thread::sleep(std::time::Duration::from_millis(800));
+                        match std::net::TcpStream::connect(&address) {
+                            Ok(mut stream) => {
+                                stream
+                                    .set_read_timeout(Some(std::time::Duration::from_secs(15)))
+                                    .ok();
+                                let mut buffer = [0u8; 128];
+                                match stream.read(&mut buffer) {
+                                    Ok(n) if n > 0 => println!(
+                                        "LAN PAYLAŞIMI OK: {}",
+                                        String::from_utf8_lossy(&buffer[..n]).trim()
+                                    ),
+                                    _ => println!("BOŞ YANIT"),
+                                }
+                                let _ = stream.write_all(b"ping\n");
+                            }
+                            Err(error) => println!("BAĞLANTI HATASI: {error}"),
+                        }
+                    }
+                    Err(error) => println!("KATILMA HATASI: {error}"),
+                }
+                core.stop_sharing();
+            }
+            Err(error) => println!("PAYLAŞIM HATASI: {error}"),
+        }
+        return;
+    }
+
+    // `--lan-beacon` keeps broadcasting a fake LAN world for a minute, so the
+    // UI can be inspected with a world present.
+    if std::env::args().any(|arg| arg == "--lan-beacon") {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("udp");
+        let packet = b"[MOTD]Arkada\xc5\x9f\xc4\xb1n D\xc3\xbcnyas\xc4\xb1[/MOTD][AD]50123[/AD]";
+        for _ in 0..60 {
+            let _ = socket.send_to(packet, ("127.0.0.1", 4445));
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        return;
+    }
+
+    // `--lan-probe` broadcasts a fake Minecraft LAN packet and reports whether
+    // the scanner picks it up (same packet the game sends on UDP 4445).
+    if std::env::args().any(|arg| arg == "--lan-probe") {
+        let core = core::Core::new();
+        core.ensure_offline_properties();
+        println!("ilk tarama: {} dünya", core.lan_worlds().len());
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("udp");
+        let packet = b"[MOTD]Probe D\xc3\xbcnyas\xc4\xb1[/MOTD][AD]51234[/AD]";
+        let _ = socket.send_to(packet, ("127.0.0.1", 4445));
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        let worlds = core.lan_worlds();
+        println!("duyuru sonrası: {} dünya", worlds.len());
+        for world in &worlds {
+            println!("  {} @ {}:{}", world.motd, world.address, world.port);
+        }
+        return;
+    }
+
     if let Some(slug) = std::env::args()
         .skip_while(|arg| arg != "--modpack-probe")
         .nth(1)

@@ -34,6 +34,7 @@ pub struct Core {
     share: Mutex<Option<ShareSession>>,
     launch_pid: Mutex<Option<u32>>,
     joined: Mutex<Option<String>>,
+    lan_worlds: Arc<Mutex<Vec<LanWorld>>>,
     status: Mutex<StatusPayload>,
     launch_child: Mutex<Option<Child>>,
 }
@@ -64,6 +65,7 @@ impl Core {
             share: Mutex::new(None),
             launch_pid: Mutex::new(None),
             joined: Mutex::new(None),
+            lan_worlds: Arc::new(Mutex::new(Vec::new())),
             status: Mutex::new(StatusPayload {
                 status: "Hazır".to_string(),
                 ..Default::default()
@@ -1517,7 +1519,7 @@ fn copy_dir(from: &Path, to: &Path) {
 mod tests {
     use super::*;
 
-    fn temp_core(tag: &str) -> Arc<Core> {
+    pub(super) fn temp_core(tag: &str) -> Arc<Core> {
         let base = std::env::temp_dir().join(format!(
             "cl-test-{tag}-{}-{}",
             std::process::id(),
@@ -1662,5 +1664,210 @@ mod tests {
         let core = temp_core("folders");
         assert!(core.open_folder("../etc").is_err());
         assert!(core.open_folder("/etc").is_err());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LAN worlds: the Minecraft broadcast on UDP 4445 plus offline-mode setup
+// ---------------------------------------------------------------------------
+
+use std::net::UdpSocket;
+
+const LAN_PORT: u16 = 4445;
+const LAN_TTL: Duration = Duration::from_secs(15);
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct LanWorld {
+    pub motd: String,
+    pub port: u16,
+    pub address: String,
+    pub last_seen: f64,
+}
+
+impl LanWorld {
+    pub fn label(&self) -> String {
+        if self.motd.is_empty() {
+            format!("Dünya :{}", self.port)
+        } else {
+            format!("{} :{}", self.motd, self.port)
+        }
+    }
+}
+
+impl Core {
+    /// Worlds the game is currently broadcasting on the LAN.
+    pub fn lan_worlds(&self) -> Vec<LanWorld> {
+        self.ensure_lan_scanner();
+        self.lan_worlds
+            .lock()
+            .map(|worlds| worlds.clone())
+            .unwrap_or_default()
+    }
+
+    fn ensure_lan_scanner(&self) {
+        static STARTED: std::sync::Once = std::sync::Once::new();
+        let worlds = self.lan_worlds.clone();
+        STARTED.call_once(move || {
+            std::thread::spawn(move || {
+                let socket = match bind_lan_socket() {
+                    Some(socket) => socket,
+                    None => return,
+                };
+                let _ = socket.set_read_timeout(Some(Duration::from_secs(1)));
+                let mut buffer = [0u8; 4096];
+                loop {
+                    match socket.recv_from(&mut buffer) {
+                        Ok((len, addr)) => {
+                            let text = String::from_utf8_lossy(&buffer[..len]);
+                            if let Some((motd, port)) = parse_lan_packet(&text) {
+                                if let Ok(mut worlds) = worlds.lock() {
+                                    worlds.retain(|world| world.port != port);
+                                    worlds.push(LanWorld {
+                                        motd,
+                                        port,
+                                        address: addr.ip().to_string(),
+                                        last_seen: now_epoch() as f64,
+                                    });
+                                    worlds.sort_by_key(|world| world.port);
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            // Timeout: drop worlds that stopped broadcasting.
+                            let cutoff = now_epoch() as f64 - LAN_TTL.as_secs() as f64;
+                            if let Ok(mut worlds) = worlds.lock() {
+                                worlds.retain(|world| world.last_seen >= cutoff);
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    /// `online-mode=false` in the launcher's own and every profile's
+    /// `server.properties`, so offline accounts can join LAN worlds.
+    pub fn ensure_offline_properties(&self) -> usize {
+        let mut targets = vec![self.mc_dir.join("server.properties")];
+        if let Ok(entries) = fs::read_dir(&self.instances_dir) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    targets.push(entry.path().join("server.properties"));
+                }
+            }
+        }
+        let mut changed = 0;
+        for target in targets {
+            if write_offline_properties(&target).is_ok() {
+                changed += 1;
+            }
+        }
+        if changed > 0 {
+            self.log(format!(
+                "Minecraft LAN için online-mode=false ayarlandı ({changed} dosya)."
+            ));
+        }
+        changed
+    }
+}
+
+fn bind_lan_socket() -> Option<UdpSocket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).ok()?;
+    socket.set_reuse_address(true).ok()?;
+    let addr: std::net::SocketAddr = format!("0.0.0.0:{LAN_PORT}").parse().ok()?;
+    socket.bind(&addr.into()).ok()?;
+    Some(socket.into())
+}
+
+/// `[MOTD]Başlık[/MOTD][AD]25565[/AD]`
+pub fn parse_lan_packet(text: &str) -> Option<(String, u16)> {
+    let motd = text
+        .find("[MOTD]")
+        .and_then(|start| {
+            let rest = &text[start + 6..];
+            rest.find("[/MOTD]").map(|end| rest[..end].trim().to_string())
+        })
+        .unwrap_or_else(|| "Minecraft dünyası".to_string());
+    let port = text
+        .find("[AD]")
+        .and_then(|start| {
+            let rest = &text[start + 4..];
+            rest.find("[/AD]")
+                .and_then(|end| rest[..end].trim().parse::<u16>().ok())
+        })?;
+    if port == 0 {
+        return None;
+    }
+    Some((motd, port))
+}
+
+/// Rewrite `server.properties` keeping every other setting, forcing
+/// `online-mode=false` (the launcher only has offline accounts).
+fn write_offline_properties(path: &Path) -> Result<()> {
+    let mut lines: Vec<String> = fs::read_to_string(path)
+        .map(|text| text.lines().map(str::to_string).collect())
+        .unwrap_or_default();
+    lines.retain(|line| !line.trim().to_lowercase().starts_with("online-mode"));
+    lines.push("online-mode=false".to_string());
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, format!("{}\n", lines.join("\n")))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod lan_tests {
+    use super::tests::temp_core;
+    use super::*;
+
+    #[test]
+    fn parses_the_minecraft_lan_broadcast() {
+        let packet = "[MOTD]Balıkçı dünyası[/MOTD][AD]25565[/AD]";
+        let (motd, port) = parse_lan_packet(packet).expect("paket");
+        assert_eq!(motd, "Balıkçı dünyası");
+        assert_eq!(port, 25565);
+
+        // Missing MOTD falls back to a default, missing/garbage port is rejected.
+        let (motd, port) = parse_lan_packet("[AD]51234[/AD]").expect("paket");
+        assert_eq!(motd, "Minecraft dünyası");
+        assert_eq!(port, 51234);
+        assert!(parse_lan_packet("[MOTD]sadece başlık[/MOTD]").is_none());
+        assert!(parse_lan_packet("[AD]0[/AD]").is_none());
+        assert!(parse_lan_packet("çöp").is_none());
+    }
+
+    #[test]
+    fn forces_offline_mode_and_keeps_other_properties() {
+        let core = temp_core("offline");
+        let root = core.mc_dir.clone();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("server.properties"),
+            "motd=Benim Dünyam\nonline-mode=true\nmax-players=10\n",
+        )
+        .unwrap();
+        core.create_instance("Bir Profil", "1.21.4", "vanilla", "").unwrap();
+
+        let changed = core.ensure_offline_properties();
+        assert!(changed >= 2, "kök ve profil dosyası yazılmalı");
+
+        let text = fs::read_to_string(root.join("server.properties")).unwrap();
+        assert!(text.contains("online-mode=false"));
+        assert!(!text.contains("online-mode=true"));
+        assert!(text.contains("motd=Benim Dünyam"), "diğer ayarlar korunmalı");
+        assert!(text.contains("max-players=10"));
+
+        let profile = fs::read_to_string(
+            core.instance_dir("bir_profil").join("server.properties"),
+        )
+        .unwrap();
+        assert!(profile.contains("online-mode=false"));
+
+        // Running it again must not duplicate the key.
+        core.ensure_offline_properties();
+        let text = fs::read_to_string(root.join("server.properties")).unwrap();
+        assert_eq!(text.matches("online-mode").count(), 1);
     }
 }

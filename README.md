@@ -42,7 +42,12 @@ CL_TAB=modrinth cargo run # belirli sekmede aç
 
 ### Arkadaşlar akışı
 
-1. **Paylaş** → yerel relay (CLT1 korumalı) + `bore.pub` tüneli → `CL1-…` kodu
+1. **LAN dünyası keşfi** → oyun UDP 4445'e `[MOTD]…[AD]port[/AD]` yayınlar; çekirdek
+   bunu dinler ve Arkadaşlar sayfasında listeler (15 saniye TTL).
+   `server.properties` her açılışta `online-mode=false` yapılır, böylece offline
+   hesaplar LAN dünyasına girebilir.
+2. **Paylaş** → seçilen LAN dünyasının **gerçek portu** yerel relay'e (CLT1
+   korumalı) bağlanır, `bore.pub` tüneli açılır ve `CL1-…` kodu üretilir
    (relay adresi, ticket ve token kodun içinde)
 2. **Katıl** → kod çözülür, yerel authenticated proxy açılır, oyun
    `--quickPlayMultiplayer 127.0.0.1:<port>` ile doğrudan arkadaşın dünyasına girer
@@ -87,7 +92,7 @@ penceresi. GPUI `actions!` + `cx.bind_keys` + kök `key_context("Launcher")`.
 
 ## Testler
 
-`cargo test` — 15 test, ağ gerektirmez:
+`cargo test` — 17 test, ağ gerektirmez:
 
 | Test | Neyi doğrular |
 | --- | --- |
@@ -99,6 +104,8 @@ penceresi. GPUI `actions!` + `cx.bind_keys` + kök `key_context("Launcher")`.
 | `effective_version_resolves_fabric_and_rejects_forge` | `fabric-loader-x-y` çözümü |
 | `open_folder_rejects_escaping_paths` | `../` ve mutlak yol reddi |
 | `reads_installed_modrinth_slugs` | profilde kurulu slug haritası (`.mrpack`/mod) |
+| `parses_the_minecraft_lan_broadcast` | UDP 4445 duyuru paketi (`[MOTD]…[/MOTD][AD]port[/AD]`) |
+| `forces_offline_mode_and_keeps_other_properties` | `online-mode=false`, diğer ayarlar korunur |
 | `hide_downloaded_filters_only_installed_projects` | "İndirilenleri gizle" filtresi |
 | `mac_is_deterministic_and_role_bound` | CLT1 MAC rol ayrımı |
 | `hex_roundtrip` | ticket kodlaması |
@@ -122,6 +129,8 @@ Her biri gerçek uzak servislerle çalışır, çıktısı yukarıdaki test turu
 | `--modpack-probe fabulously-optimized` | 49 dosya, **47 mod** |
 | `--launch-probe 1.21.4` | oyun açıldı (`running=true`, 71 classpath) |
 | `--relay-probe` | paylaş → katıl → `JOIN OK` |
+| `--lan-probe` | UDP 4445'e atılan sahte duyuru keşfediliyor |
+| `--lan-share-probe` | keşfedilen LAN portu paylaşılıp misafirle veri akıtılıyor |
 
 ## Geliştirme yardımcıları
 
