@@ -360,6 +360,7 @@ impl AppView {
                             "friends" => window.dispatch_action(Box::new(GoFriends), cx),
                             "search" => window.dispatch_action(Box::new(FocusSearch), cx),
                             "shortcuts" => window.dispatch_action(Box::new(ShowShortcuts), cx),
+                            "details" => this.profile_details(window, cx),
                             _ => {}
                         }
                     }
@@ -928,6 +929,84 @@ impl AppView {
         cx.notify();
     }
 
+    /// Facts about the active profile, straight from disk.
+    fn profile_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(instance) = self.active_instance().cloned() else {
+            return;
+        };
+        let path = self.core.instance_dir(&instance.id);
+        let worlds = self.worlds.len();
+        let counts = self.content_counts;
+        let rows = [
+            ("Ad", instance.name.clone()),
+            ("Klasör", instance.id.clone()),
+            ("Sürüm", instance.version.clone()),
+            (
+                "Yükleyici",
+                if instance.loader_version.is_empty() {
+                    instance.loader_label().to_string()
+                } else {
+                    format!("{} {}", instance.loader_label(), instance.loader_version)
+                },
+            ),
+            ("Mod", format!("{} (shader {}, doku {})", counts[0], counts[1], counts[2])),
+            ("Dünya", worlds.to_string()),
+            ("Oluşturuldu", instance.created_at.clone()),
+            ("Yol", path.to_string_lossy().to_string()),
+        ];
+        let entity = cx.entity();
+        window.open_dialog(cx, move |dialog, _, app| {
+            let cocoa = Cocoa::get(app);
+            let mut list = v_flex().gap_1();
+            for (label, value) in &rows {
+                list = list.child(
+                    h_flex()
+                        .w_full()
+                        .items_start()
+                        .gap_3()
+                        .py_1()
+                        .child(
+                            div()
+                                .w(px(90.))
+                                .flex_shrink_0()
+                                .text_size(TEXT_11)
+                                .text_color(cocoa.text_3)
+                                .child(*label),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(TEXT_12)
+                                .text_color(cocoa.text_2)
+                                .child(value.clone()),
+                        ),
+                );
+            }
+            let folder = entity.clone();
+            let path_value = path.clone();
+            dialog
+                .title("Profil detayları")
+                .w(px(520.))
+                .child(list)
+                .footer(
+                    gpui_kit::component::dialog::DialogFooter::new()
+                        .child(
+                            Button::new("details-folder")
+                                .label("Klasörü aç")
+                                .on_click(move |_, _, cx| {
+                                    folder.update(cx, |this, cx| this.open_folder("", cx));
+                                }),
+                        )
+                        .child(
+                            Button::new("details-close")
+                                .label("Kapat")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        ),
+                )
+        });
+    }
+
     fn shortcuts_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         const SHORTCUTS: [(&str, &str); 9] = [
             ("Ctrl+1", "Oyna"),
@@ -1305,6 +1384,7 @@ impl AppView {
                             )
                             .child(
                                 div()
+                                    .id("rail-shortcuts")
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -1315,6 +1395,14 @@ impl AppView {
                                     .border_color(cocoa.line_strong)
                                     .text_size(px(10.))
                                     .text_color(cocoa.text_3)
+                                    .cursor_pointer()
+                                    .hover(|this| {
+                                        this.border_color(cocoa.text_3)
+                                            .text_color(cocoa.text_2)
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.shortcuts_dialog(window, cx)
+                                    }))
                                     .child("?"),
                             ),
                     ),
