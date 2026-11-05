@@ -87,7 +87,7 @@ penceresi. GPUI `actions!` + `cx.bind_keys` + kök `key_context("Launcher")`.
 
 ## Testler
 
-`cargo test` — 13 test, ağ gerektirmez:
+`cargo test` — 15 test, ağ gerektirmez:
 
 | Test | Neyi doğrular |
 | --- | --- |
@@ -98,6 +98,8 @@ penceresi. GPUI `actions!` + `cx.bind_keys` + kök `key_context("Launcher")`.
 | `reads_worlds_and_screenshots_from_disk` | dünya boyutu/tarihi, sadece PNG listeleme |
 | `effective_version_resolves_fabric_and_rejects_forge` | `fabric-loader-x-y` çözümü |
 | `open_folder_rejects_escaping_paths` | `../` ve mutlak yol reddi |
+| `reads_installed_modrinth_slugs` | profilde kurulu slug haritası (`.mrpack`/mod) |
+| `hide_downloaded_filters_only_installed_projects` | "İndirilenleri gizle" filtresi |
 | `mac_is_deterministic_and_role_bound` | CLT1 MAC rol ayrımı |
 | `hex_roundtrip` | ticket kodlaması |
 | `handshake_accepts_guest_and_rejects_replay` | gerçek TCP el sıkışması + replay reddi |

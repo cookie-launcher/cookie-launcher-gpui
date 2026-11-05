@@ -33,6 +33,8 @@ fn main() {
             username: "Probe",
             ram_gb: 2,
             quick_play: None,
+            cookie_optimized: true,
+            aikar: true,
         };
         let core_arc = core.clone();
         let prepared = core_arc.prepare(&version);
@@ -140,6 +142,35 @@ fn main() {
     // `--search-probe <mc> <loader> <query>`: verify the Modrinth facets.
     // `--install-probe <slug> [mod|shader|resourcepack]` downloads a project
     // and its dependencies into a throwaway profile.
+    // `--seed-profile <name> <slug>...` creates a profile and installs the
+    // given projects into it, so the UI filter can be inspected with real data.
+    if let Some(name) = std::env::args()
+        .skip_while(|arg| arg != "--seed-profile")
+        .nth(1)
+    {
+        let mut slugs: Vec<String> = Vec::new();
+        let mut collecting = false;
+        for arg in std::env::args() {
+            if collecting {
+                slugs.push(arg);
+            } else if arg == "--seed-profile" {
+                collecting = true;
+            }
+        }
+        let core = core::Core::new();
+        let instance = core
+            .create_instance(&name, "1.21.4", "fabric", "")
+            .expect("profile");
+        for slug in slugs.iter().skip(1) {
+            match core.install(slug, &instance.id, "mod", true) {
+                Ok(files) => println!("installed {slug}: {}", files.len()),
+                Err(error) => println!("failed {slug}: {error}"),
+            }
+        }
+        println!("profile id: {}", instance.id);
+        return;
+    }
+
     if std::env::args().any(|arg| arg == "--install-probe") {
         let args: Vec<String> = std::env::args().collect();
         let pos = args.iter().position(|a| a == "--install-probe").unwrap_or(0);

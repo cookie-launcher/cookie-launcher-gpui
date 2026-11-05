@@ -135,6 +135,41 @@ pub struct LaunchOptions<'a> {
     pub username: &'a str,
     pub ram_gb: u64,
     pub quick_play: Option<String>,
+    pub cookie_optimized: bool,
+    pub aikar: bool,
+}
+
+/// Aikar's G1GC flag set (the same one the Python core used for `jvm_preset`).
+const AIKAR_FLAGS: [&str; 8] = [
+    "-XX:+UseG1GC",
+    "-XX:+ParallelRefProcEnabled",
+    "-XX:MaxGCPauseMillis=200",
+    "-XX:+UnlockExperimentalVMOptions",
+    "-XX:+DisableExplicitGC",
+    "-XX:G1NewSizePercent=30",
+    "-XX:G1MaxNewSizePercent=40",
+    "-XX:G1HeapRegionSize=8M",
+];
+
+/// Merge `gamma:1000.0` into the instance's `options.txt` without dropping the
+/// player's other settings.
+fn apply_fullbright(instance_dir: &Path) -> Result<()> {
+    let path = instance_dir.join("options.txt");
+    let mut lines: Vec<String> = fs::read_to_string(&path)
+        .map(|text| text.lines().map(str::to_string).collect())
+        .unwrap_or_default();
+    let mut found = false;
+    for line in lines.iter_mut() {
+        if line.starts_with("gamma:") {
+            *line = "gamma:1000.0".to_string();
+            found = true;
+        }
+    }
+    if !found {
+        lines.push("gamma:1000.0".to_string());
+    }
+    fs::write(&path, lines.join("\n"))?;
+    Ok(())
 }
 
 impl Core {
@@ -363,7 +398,19 @@ impl Core {
         fs::create_dir_all(&instance_dir)?;
 
         let ram = options.ram_gb.clamp(2, 64);
+
+        // "Cookie optimizasyonu": FullBright in the instance's options.txt and
+        // Aikar's GC flags. Both are observable, not cosmetic.
+        if options.cookie_optimized {
+            let _ = apply_fullbright(&instance_dir);
+        }
+
         let mut command = Command::new(java_binary());
+        if options.aikar {
+            for flag in AIKAR_FLAGS {
+                command.arg(flag);
+            }
+        }
         command
             .arg(format!("-Xmx{ram}G"))
             .arg(format!("-Xms{}G", (ram / 2).max(1)))

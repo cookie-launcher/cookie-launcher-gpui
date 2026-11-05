@@ -164,6 +164,9 @@ pub struct AppView {
     pub content_kind: String,
     pub content_items: Vec<crate::core::ContentEntry>,
     pub content_counts: [usize; 3],
+    /// Modrinth slugs already installed in the active profile, used by the
+    /// "hide downloaded" filter.
+    pub installed_slugs: std::collections::HashSet<String>,
     /// Scroll position of the content centre, reset when results change.
     pub modrinth_scroll: ScrollHandle,
     pub root_focus: FocusHandle,
@@ -285,6 +288,7 @@ impl AppView {
             content_kind: "mod".to_string(),
             content_items: Vec::new(),
             content_counts: [0; 3],
+            installed_slugs: std::collections::HashSet::new(),
             modrinth_scroll: ScrollHandle::new(),
             root_focus: cx.focus_handle(),
             installing_slug: None,
@@ -364,6 +368,11 @@ impl AppView {
                 });
             })
             .detach();
+        }
+
+        if std::env::var("CL_HIDE_DOWNLOADED").is_ok() {
+            self.hide_downloaded = true;
+            cx.notify();
         }
 
         if let Ok(slug) = std::env::var("CL_INSTALL_PACK") {
@@ -703,10 +712,17 @@ impl AppView {
         let kind = self.content_kind.clone();
         self.request(
             cx,
-            move |core| (core.content(&id, &kind), core.content_counts(&id)),
-            |this, (items, counts), cx| {
+            move |core| {
+                (
+                    core.content(&id, &kind),
+                    core.content_counts(&id),
+                    core.installed_slugs(&id),
+                )
+            },
+            |this, (items, counts, slugs), cx| {
                 this.content_items = items;
                 this.content_counts = counts;
+                this.installed_slugs = slugs;
                 cx.notify();
             },
         );
@@ -745,6 +761,11 @@ impl AppView {
                 this.refresh_content(cx);
             },
         );
+    }
+
+    /// Results the Modlar grid should show, honouring "İndirilenleri gizle".
+    pub fn visible_hits(&self) -> Vec<SearchHit> {
+        visible_hits(&self.hits, &self.installed_slugs, self.hide_downloaded)
     }
 
     pub fn load_logs(&mut self, cx: &mut Context<Self>) {
@@ -797,7 +818,7 @@ impl AppView {
                 username
             },
             ram: self.ram_gb as i64,
-            cookie_optimized: true,
+            cookie_optimized: self.optimize_engine,
             jvm_preset: "aikar".to_string(),
             quick_play: None,
         };
@@ -835,7 +856,7 @@ impl AppView {
                 username
             },
             ram: self.ram_gb as i64,
-            cookie_optimized: true,
+            cookie_optimized: self.optimize_engine,
             jvm_preset: "aikar".to_string(),
             quick_play: Some(address.clone()),
         };
@@ -1594,4 +1615,54 @@ fn decode_image(bytes: Vec<u8>) -> Option<std::sync::Arc<Image>> {
         ImageFormat::Png
     };
     Some(std::sync::Arc::new(Image::from_bytes(format, bytes)))
+}
+
+/// Filter applied to the Modrinth result grid.
+pub fn visible_hits(
+    hits: &[SearchHit],
+    installed: &std::collections::HashSet<String>,
+    hide_downloaded: bool,
+) -> Vec<SearchHit> {
+    if !hide_downloaded {
+        return hits.to_vec();
+    }
+    hits.iter()
+        .filter(|hit| !installed.contains(&hit.slug))
+        .cloned()
+        .collect()
+}
+
+#[cfg(test)]
+mod view_tests {
+    // Deliberately not `use super::*`: that would import GPUI's `test` macro
+    // and shadow the standard `#[test]` attribute.
+    use super::visible_hits;
+    use crate::api::SearchHit;
+
+    fn hit(slug: &str) -> SearchHit {
+        SearchHit {
+            slug: slug.to_string(),
+            title: slug.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn hide_downloaded_filters_only_installed_projects() {
+        let hits = vec![hit("sodium"), hit("lithium"), hit("iris")];
+        let installed: std::collections::HashSet<String> =
+            ["sodium".to_string(), "iris".to_string()].into_iter().collect();
+
+        let shown = visible_hits(&hits, &installed, true);
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].slug, "lithium");
+
+        // With the toggle off every result stays visible.
+        assert_eq!(visible_hits(&hits, &installed, false).len(), 3);
+        // Nothing installed -> nothing filtered.
+        assert_eq!(
+            visible_hits(&hits, &Default::default(), true).len(),
+            3
+        );
+    }
 }

@@ -313,7 +313,10 @@ impl AppView {
         } else {
             let mut list = v_flex().w_full().gap_1();
             for friend in &friends {
-                list = list.child(friend_row(friend, cx));
+                let code = friend.code.clone();
+                list = list.child(friend_row(friend, cx, cx.listener(move |this, _, _, cx| {
+                    this.remove_friend(code.clone(), cx)
+                })));
             }
             body = body.child(list);
         }
@@ -383,6 +386,19 @@ impl AppView {
         );
     }
 
+    pub(crate) fn remove_friend(&mut self, code: String, cx: &mut Context<Self>) {
+        self.request(
+            cx,
+            move |core| core.remove_friend(&code),
+            |this, result, cx| {
+                if let Err(error) = result {
+                    this.toast(error.to_string(), ToastKind::Error, cx);
+                }
+                this.refresh_social(cx);
+            },
+        );
+    }
+
     pub(crate) fn add_friend(&mut self, code: String, cx: &mut Context<Self>) {
         let code = code.trim().to_string();
         if code.is_empty() {
@@ -433,7 +449,11 @@ fn section_title(text: &'static str, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-fn friend_row(friend: &SocialFriend, cx: &App) -> AnyElement {
+fn friend_row(
+    friend: &SocialFriend,
+    cx: &App,
+    on_remove: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut gpui_kit::App) + 'static,
+) -> AnyElement {
     let cocoa = Cocoa::get(cx);
     let initial = friend
         .name
@@ -510,16 +530,12 @@ fn friend_row(friend: &SocialFriend, cx: &App) -> AnyElement {
                         .child(if friend.online { "Çevrimiçi" } else { "Çevrimdışı" }),
                 ),
         )
-        .when(friend.online, |this| {
-            this.child(
-                h_flex()
-                    .items_center()
-                    .gap_1()
-                    .text_size(TEXT_10)
-                    .text_color(cocoa.text_3)
-                    .child(Icon::new(IconName::Play).size(px(13.)).text_color(cocoa.text_3))
-                    .child("Katıl"),
-            )
-        })
+        .child(
+            Button::new(SharedString::from(format!("friend-remove-{}", friend.code)))
+                .xsmall()
+                .ghost()
+                .label("Sil")
+                .on_click(on_remove),
+        )
         .into_any_element()
 }

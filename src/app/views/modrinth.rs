@@ -174,7 +174,14 @@ impl AppView {
                 h_flex()
                     .items_center()
                     .gap_2()
-                    .child(Checkbox::new("hide-downloaded").checked(self.hide_downloaded))
+                    .child(
+                        Checkbox::new("hide-downloaded")
+                            .checked(self.hide_downloaded)
+                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                this.hide_downloaded = *checked;
+                                cx.notify();
+                            })),
+                    )
                     .child(
                         div()
                             .text_size(TEXT_11)
@@ -186,7 +193,14 @@ impl AppView {
                 h_flex()
                     .items_center()
                     .gap_2()
-                    .child(Checkbox::new("install-deps").checked(self.install_dependencies))
+                    .child(
+                        Checkbox::new("install-deps")
+                            .checked(self.install_dependencies)
+                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                this.install_dependencies = *checked;
+                                cx.notify();
+                            })),
+                    )
                     .child(
                         div()
                             .text_size(TEXT_11)
@@ -257,30 +271,29 @@ impl AppView {
                     .child(target_detail),
             );
 
+        let shown = self.visible_hits();
         let mut results = v_flex().w_full().gap_3();
-        if self.hits.is_empty() {
+        if shown.is_empty() {
             results = results.child(if self.search_busy {
-                {
-                    let mut skeleton = v_flex().w_full().gap_2();
-                    for index in 0..3 {
-                        skeleton = skeleton.child(
-                            div()
-                                .h(px(84.))
-                                .w_full()
-                                .rounded(px(6.))
-                                .bg(cocoa.surface_2)
-                                .with_animation(
-                                    SharedString::from(format!("skeleton-row-{index}")),
-                                    Animation::new(std::time::Duration::from_millis(1400))
-                                        .repeat()
-                                        .with_easing(|t: f32| (t * std::f32::consts::PI).sin().abs()),
-                                    |el: Div, t: f32| el.opacity(0.55 + 0.45 * t),
-                                ),
-                        );
-                    }
-                    skeleton.into_any_element()
+                let mut skeleton = v_flex().w_full().gap_2();
+                for index in 0..3 {
+                    skeleton = skeleton.child(
+                        div()
+                            .h(px(84.))
+                            .w_full()
+                            .rounded(px(6.))
+                            .bg(cocoa.surface_2)
+                            .with_animation(
+                                SharedString::from(format!("skeleton-row-{index}")),
+                                Animation::new(std::time::Duration::from_millis(1400))
+                                    .repeat()
+                                    .with_easing(|t: f32| (t * std::f32::consts::PI).sin().abs()),
+                                |el: Div, t: f32| el.opacity(0.55 + 0.45 * t),
+                            ),
+                    );
                 }
-            } else {
+                skeleton.into_any_element()
+            } else if self.hits.is_empty() {
                 empty_state(
                     "Sonuç yok",
                     "Aramayı değiştir ya da başka bir içerik türü seç.",
@@ -288,10 +301,18 @@ impl AppView {
                     cx,
                 )
                 .into_any_element()
+            } else {
+                empty_state(
+                    "Hepsi zaten kurulu",
+                    "Bu profilde görünen tüm sonuçlar kurulu. “İndirilenleri gizle”yi kapatırsan hepsini görürsün.",
+                    "✓",
+                    cx,
+                )
+                .into_any_element()
             });
         }
 
-        for pair in self.hits.clone().chunks(2) {
+        for pair in shown.chunks(2) {
             let mut row = h_flex().w_full().items_stretch().gap_3();
             for hit in pair {
                 row = row.child(self.render_hit_card(hit.clone(), cx));

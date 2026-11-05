@@ -580,7 +580,28 @@ impl Core {
         if installed.is_empty() {
             return Err(anyhow!("Kurulacak dosya bulunamadı."));
         }
+        self.record_installed_slug(&instance.id, slug, &installed);
         Ok(installed)
+    }
+
+    /// Slug -> files map for one profile (`<instance>/modrinth.json`).
+    pub fn installed_slugs(&self, instance_id: &str) -> std::collections::HashSet<String> {
+        let path = self.instance_dir(instance_id).join("modrinth.json");
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<std::collections::HashMap<String, Vec<String>>>(&text).ok())
+            .map(|map| map.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    fn record_installed_slug(&self, instance_id: &str, slug: &str, files: &[String]) {
+        let path = self.instance_dir(instance_id).join("modrinth.json");
+        let mut map: std::collections::HashMap<String, Vec<String>> = fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
+        map.insert(slug.to_string(), files.to_vec());
+        let _ = fs::write(&path, serde_json::to_vec_pretty(&map).unwrap_or_default());
     }
 
     fn project_slug(&self, project_id: &str) -> Option<String> {
@@ -693,6 +714,8 @@ impl Core {
         let username = request.username.clone();
         let ram = request.ram.max(2) as u64;
         let quick_play = request.quick_play.clone();
+        let optimized = request.cookie_optimized;
+        let aikar = request.jvm_preset.eq_ignore_ascii_case("aikar");
         std::thread::spawn(move || {
             let options = crate::launch::LaunchOptions {
                 version: &version,
@@ -700,6 +723,8 @@ impl Core {
                 username: &username,
                 ram_gb: ram,
                 quick_play: quick_play.clone(),
+                cookie_optimized: optimized,
+                aikar: aikar,
             };
             if let Err(error) = core.launch_now(options) {
                 core.set_status(|s| {
@@ -1452,6 +1477,7 @@ impl Core {
             copy_dir(&unpacked.join(overrides), &dir);
         }
 
+        self.record_installed_slug(&instance.id, slug, &[index.name.clone()]);
         let mods = self.content(&instance.id, "mod").len();
         self.log(format!(
             "Modpack hazır: {} · {installed} dosya · {mods} mod",
@@ -1613,6 +1639,22 @@ mod tests {
         assert_eq!(core.effective_version(&instance).unwrap(), "1.21.4");
         instance.loader = "forge".into();
         assert!(core.effective_version(&instance).is_err());
+    }
+
+    #[test]
+    fn reads_installed_modrinth_slugs() {
+        let core = temp_core("slugs");
+        core.create_instance("Slug Profili", "1.21.4", "fabric", "").unwrap();
+        assert!(core.installed_slugs("slug_profili").is_empty());
+        fs::write(
+            core.instance_dir("slug_profili").join("modrinth.json"),
+            br#"{"sodium":["sodium.jar"],"fabric-api":["fabric-api.jar"]}"#,
+        )
+        .unwrap();
+        let slugs = core.installed_slugs("slug_profili");
+        assert_eq!(slugs.len(), 2);
+        assert!(slugs.contains("sodium"));
+        assert!(slugs.contains("fabric-api"));
     }
 
     #[test]
