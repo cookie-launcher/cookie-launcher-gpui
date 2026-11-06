@@ -29,6 +29,9 @@ pub struct Core {
     pub instances_dir: PathBuf,
     pub data_dir: PathBuf,
     agent: ureq::Agent,
+    /// Downloads can run for minutes (client jars, modpacks), so they use an
+    /// agent without the API's 30 s global timeout.
+    download_agent: ureq::Agent,
     logs: Mutex<VecDeque<String>>,
     identity: std::sync::OnceLock<Identity>,
     share: Mutex<Option<ShareSession>>,
@@ -59,7 +62,14 @@ impl Core {
             mc_dir,
             instances_dir,
             data_dir,
-            agent: ureq::Agent::new_with_config(config),
+            agent: ureq::Agent::new_with_config(config.clone()),
+            download_agent: ureq::Agent::new_with_config(
+                ureq::Agent::config_builder()
+                    .timeout_connect(Some(Duration::from_secs(30)))
+                    .timeout_global(None)
+                    .user_agent(USER_AGENT)
+                    .build(),
+            ),
             logs: Mutex::new(VecDeque::new()),
             identity: std::sync::OnceLock::new(),
             share: Mutex::new(None),
@@ -691,13 +701,21 @@ impl Core {
     // -- http --------------------------------------------------------------
 
     pub(crate) fn fetch_json<T: for<'de> Deserialize<'de>>(&self, url: &str) -> Result<T> {
-        let mut response = self.agent.get(url).call().map_err(|e| anyhow!("{url}: {e}"))?;
+        let mut response = self
+            .download_agent
+            .get(url)
+            .call()
+            .map_err(|e| anyhow!("{url}: {e}"))?;
         let body = response.body_mut().read_to_string()?;
         serde_json::from_str(&body).map_err(|e| anyhow!("{url}: {e}"))
     }
 
     pub(crate) fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>> {
-        let mut response = self.agent.get(url).call().map_err(|e| anyhow!("{url}: {e}"))?;
+        let mut response = self
+            .download_agent
+            .get(url)
+            .call()
+            .map_err(|e| anyhow!("{url}: {e}"))?;
         // Client jars are ~30 MB; other downloads are small. Raise the per-body
         // ceiling instead of relying on ureq's 10 MB default.
         let body = response
@@ -713,7 +731,11 @@ impl Core {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut response = self.agent.get(url).call().map_err(|e| anyhow!("{url}: {e}"))?;
+        let mut response = self
+            .download_agent
+            .get(url)
+            .call()
+            .map_err(|e| anyhow!("{url}: {e}"))?;
         let mut file = fs::File::create(target)?;
         let copied = std::io::copy(
             &mut response
@@ -1590,10 +1612,11 @@ impl Core {
         let _ = fs::remove_dir_all(&work);
         fs::create_dir_all(&work)?;
         let archive = work.join(filename);
-        self.download_to(url, &archive)?;
+        self.download_to(url, &archive)
+            .map_err(|e| anyhow!("paket indirilemedi: {e}"))?;
 
         let unpacked = work.join("unpacked");
-        extract_zip(&archive, &unpacked)?;
+        extract_zip(&archive, &unpacked).map_err(|e| anyhow!("paket açılamadı: {e}"))?;
 
         let index_path = unpacked.join("modrinth.index.json");
         let index: MrpackIndex = serde_json::from_str(&fs::read_to_string(&index_path)?)?;
@@ -1619,7 +1642,9 @@ impl Core {
         } else {
             index.name.clone()
         };
-        let instance = self.create_instance(&name, &mc, &loader, "")?;
+        let instance = self
+            .create_instance(&name, &mc, &loader, "")
+            .map_err(|e| anyhow!("profil oluşturulamadı: {e}"))?;
         let dir = self.instance_dir(&instance.id);
 
         // Persist the loader version the pack pinned.
@@ -1664,7 +1689,7 @@ impl Core {
         }
 
         for overrides in ["overrides", "client-overrides"] {
-            copy_dir(&unpacked.join(overrides), &dir);
+            copy_dir(&unpacked.join(overrides), &dir).map_err(|e| anyhow!("overrides: {e}"))?;
         }
 
         self.record_installed_slug(&instance.id, slug, &[index.name.clone()]);
@@ -1684,23 +1709,25 @@ impl Core {
     }
 }
 
-fn copy_dir(from: &Path, to: &Path) {
-    let Ok(entries) = fs::read_dir(from) else {
-        return;
+fn copy_dir(from: &Path, to: &Path) -> Result<()> {
+    let entries = match fs::read_dir(from) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()),
     };
     for entry in entries.flatten() {
         let path = entry.path();
         let target = to.join(entry.file_name());
         if path.is_dir() {
-            let _ = fs::create_dir_all(&target);
-            copy_dir(&path, &target);
+            fs::create_dir_all(&target)?;
+            copy_dir(&path, &target)?;
         } else {
             if let Some(parent) = target.parent() {
-                let _ = fs::create_dir_all(parent);
+                fs::create_dir_all(parent)?;
             }
-            let _ = fs::copy(&path, &target);
+            fs::copy(&path, &target)?;
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

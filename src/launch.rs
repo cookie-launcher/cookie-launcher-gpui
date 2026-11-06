@@ -711,17 +711,47 @@ pub(crate) fn extract_zip(archive: &Path, target: &Path) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
-    if status.map(|s| s.success()).unwrap_or(false) {
-        return Ok(());
+    if !status.map(|s| s.success()).unwrap_or(false) {
+        let _ = Command::new("jar")
+            .arg("xf")
+            .arg(archive)
+            .current_dir(target)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
-    let _ = Command::new("jar")
-        .arg("xf")
-        .arg(archive)
-        .current_dir(target)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    // Archives in the wild (a real .mrpack did this) can carry entries with
+    // mode 000; unzip reproduces them and every later read fails with EACCES.
+    fix_extracted_permissions(target, 0);
     Ok(())
+}
+
+/// Give extracted files a readable mode. Directories keep the executable bit so
+/// they stay traversable.
+fn fix_extracted_permissions(root: &Path, depth: usize) {
+    use std::os::unix::fs::PermissionsExt;
+
+    if depth > 32 {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if meta.is_dir() {
+            let mode = meta.permissions().mode() & 0o777;
+            if mode & 0o700 != 0o700 {
+                let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o755));
+            }
+            fix_extracted_permissions(&path, depth + 1);
+        } else if meta.permissions().mode() & 0o444 == 0 {
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o644));
+        }
+    }
 }
 
 fn compute_md5(bytes: &[u8]) -> [u8; 16] {

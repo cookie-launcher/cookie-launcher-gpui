@@ -341,7 +341,7 @@ fn main() {
                     println!("LOG {line}");
                 }
             }
-            Err(error) => println!("MODPACK FAILED: {error}"),
+            Err(error) => println!("MODPACK FAILED: {error:#}"),
         }
         return;
     }
