@@ -106,6 +106,24 @@ fn main() {
         return;
     }
 
+    // `--pack-update-probe <id>`: print the pack status, update it, print again.
+    if std::env::args().any(|arg| arg == "--pack-update-probe") {
+        let id = std::env::args()
+            .skip_while(|arg| arg != "--pack-update-probe")
+            .nth(1)
+            .unwrap_or_default();
+        let core = core::Core::new();
+        println!("önce: {:?}", core.pack_status(&id));
+        match core.update_modpack(&id) {
+            Ok(status) => println!("sonra: {status:?}"),
+            Err(error) => println!("GÜNCELLEME HATASI: {error:#}"),
+        }
+        for line in core.logs().iter().rev().take(5).rev() {
+            println!("LOG {line}");
+        }
+        return;
+    }
+
     // `--launch-instance <id>` exercises the real launch path (effective
     // version, installer if needed, then the game) for an existing profile.
     if std::env::args().any(|arg| arg == "--launch-instance") {

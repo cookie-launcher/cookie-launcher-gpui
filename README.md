@@ -37,6 +37,7 @@ CL_TAB=modrinth cargo run # belirli sekmede aç
 | Modrinth arama (sürüm + yükleyici facet'li) | `core.rs` | ✅ |
 | Modrinth kurulum (jar + bağımlılık) | `core.rs` | ✅ |
 | **Modpack kurulumu** (`.mrpack` → profil) | `core.rs` | ✅ doğrulandı (47 mod) |
+| **Modpack güncelleme** (yeni dosyalar + kalkanların silinmesi) | `core.rs` | ✅ doğrulandı |
 | Ekran görüntüleri (gerçek thumbnail) | `core.rs` + UI | ✅ |
 | Log halkası (1000 satır) + durum | `core.rs` | ✅ |
 | **Arkadaşlar**: bore.pub tüneli + CLT1 HMAC el sıkışması | `social.rs` + `relay.rs` | ✅ doğrulandı |
@@ -99,7 +100,6 @@ Wayland app id'si masaüstü girdisiyle eşleşir.
 ## Samimi olarak eksik olanlar
 
 - **Profil detay ekranı** (`pds-*`): içerik/sürüm/dünya/log/not sekmeleri
-- Modpack içeriğini sonradan güncelleme
 - `Noise_XX` uçtan uca şifreleme (CLT1 kimlik doğrulama var, taşıma şifrelemesi yok)
 - AppImage / deb paketi (şu an ikon + `.desktop` + kurulum betiği var)
 

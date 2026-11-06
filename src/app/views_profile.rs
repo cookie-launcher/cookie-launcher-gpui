@@ -122,6 +122,68 @@ impl AppView {
                     ),
             );
 
+        // ---- modpack update banner ---------------------------------------
+        let pack_banner = self.pack_status.clone().map(|status| {
+            if status.update_available {
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .px_4()
+                    .py_3()
+                    .rounded(px(RADIUS_SURFACE))
+                    .bg(cocoa.surface_2)
+                    .border_1()
+                    .border_color(cocoa.amber)
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_size(TEXT_12)
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(cocoa.amber)
+                                    .child("Modpack güncellemesi var"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(TEXT_11)
+                                    .text_color(cocoa.text_2)
+                                    .child(format!(
+                                        "{} → {}  ·  yeni dosyalar eklenir, kalkanlar silinir",
+                                        status.current, status.latest
+                                    )),
+                            ),
+                    )
+                    .child(
+                        Button::new("pack-update")
+                            .small()
+                            .label("Güncelle")
+                            .on_click(cx.listener(|this, _, _, cx| this.update_pack(cx))),
+                    )
+                    .into_any_element()
+            } else {
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_2()
+                    .px_4()
+                    .py_2()
+                    .rounded(px(RADIUS_SURFACE))
+                    .bg(cocoa.surface_1)
+                    .border_1()
+                    .border_color(cocoa.line)
+                    .child(
+                        div()
+                            .text_size(TEXT_11)
+                            .text_color(cocoa.text_3)
+                            .child(format!("Modpack: {} · {}", status.slug, status.current)),
+                    )
+                    .into_any_element()
+            }
+        });
+
         // ---- installed content -------------------------------------------
         let kinds = [
             ("mod", "Modlar", self.content_counts[0]),
@@ -385,15 +447,18 @@ impl AppView {
             )
             .child(log_lines);
 
-        v_flex()
+        let mut page = v_flex()
             .id("profile-page")
             .size_full()
             .overflow_y_scroll()
             .gap_3()
             .px(px(18.))
             .py(px(16.))
-            .child(header)
-            .child(content_panel)
+            .child(header);
+        if let Some(banner) = pack_banner {
+            page = page.child(banner);
+        }
+        page.child(content_panel)
             .child(
                 h_flex()
                     .w_full()

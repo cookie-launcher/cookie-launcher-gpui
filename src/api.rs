@@ -175,6 +175,16 @@ pub struct Instance {
     pub install_progress: Option<i64>,
     #[serde(default)]
     pub install_detail: Option<String>,
+    /// Set when the profile came from a Modrinth modpack.
+    #[serde(default)]
+    pub pack_slug: String,
+    #[serde(default)]
+    pub pack_version: String,
+    #[serde(default)]
+    pub pack_version_id: String,
+    /// Files the pack installed, so an update can remove what disappeared.
+    #[serde(default)]
+    pub pack_files: Vec<String>,
 }
 
 impl Instance {
@@ -593,4 +603,13 @@ pub struct PlayerIdRequest {
 pub struct FriendRespondRequest {
     pub player_id: String,
     pub accept: bool,
+}
+
+/// Result of comparing a profile's pack with the newest published version.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PackStatus {
+    pub slug: String,
+    pub current: String,
+    pub latest: String,
+    pub update_available: bool,
 }

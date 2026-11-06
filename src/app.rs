@@ -174,6 +174,8 @@ pub struct AppView {
     pub installed_slugs: std::collections::HashSet<String>,
     /// Worlds the game is broadcasting on the LAN right now.
     pub lan_worlds: Vec<crate::core::LanWorld>,
+    /// Update state for the profile's modpack, if it came from one.
+    pub pack_status: Option<crate::api::PackStatus>,
     /// Scroll position of the content centre, reset when results change.
     pub modrinth_scroll: ScrollHandle,
     pub root_focus: FocusHandle,
@@ -302,6 +304,7 @@ impl AppView {
             content_counts: [0; 3],
             installed_slugs: std::collections::HashSet::new(),
             lan_worlds: Vec::new(),
+            pack_status: None,
             modrinth_scroll: ScrollHandle::new(),
             root_focus: cx.focus_handle(),
             installing_slug: None,
@@ -1021,8 +1024,48 @@ impl AppView {
             self.refresh_worlds(cx);
             self.refresh_content(cx);
         }
+        self.refresh_pack_status(cx);
         self.tab = Tab::Profile;
         cx.notify();
+    }
+
+    /// Ask Modrinth whether the profile's pack has a newer version.
+    pub fn refresh_pack_status(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.active_id.clone() else {
+            self.pack_status = None;
+            return;
+        };
+        self.request(
+            cx,
+            move |core| core.pack_status(&id),
+            |this, status, cx| {
+                this.pack_status = status;
+                cx.notify();
+            },
+        );
+    }
+
+    /// Pull the newest published pack version into the profile.
+    pub fn update_pack(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.active_id.clone() else {
+            return;
+        };
+        self.request(
+            cx,
+            move |core| core.update_modpack(&id),
+            |this, result, cx| {
+                match result {
+                    Ok(status) => {
+                        this.pack_status = Some(status);
+                        this.toast("Modpack güncellendi.", ToastKind::Success, cx);
+                    }
+                    Err(error) => this.toast(error.to_string(), ToastKind::Error, cx),
+                }
+                this.refresh_content(cx);
+                this.refresh_instances(cx);
+                cx.notify();
+            },
+        );
     }
 
     fn go_to(&mut self, tab: Tab, cx: &mut Context<Self>) {

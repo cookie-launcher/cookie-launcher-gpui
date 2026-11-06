@@ -17,7 +17,7 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{
-    Instance, LaunchRequest, Screenshot, SearchHit, SocialFriend, StatusPayload, World,
+    Instance, LaunchRequest, PackStatus, Screenshot, SearchHit, SocialFriend, StatusPayload, World,
 };
 
 const USER_AGENT: &str = "CookieLauncher/4.0 (Rust; +https://github.com/cookie-launcher)";
@@ -1145,6 +1145,12 @@ fn write_instance(dir: &Path, instance: &Instance) -> Result<()> {
         loader_version: &'a str,
         icon: &'a str,
         created_at: &'a str,
+        // Without these the profile forgets which pack it came from and can
+        // never be updated.
+        pack_slug: &'a str,
+        pack_version: &'a str,
+        pack_version_id: &'a str,
+        pack_files: &'a [String],
     }
     let stored = Stored {
         name: &instance.name,
@@ -1153,6 +1159,10 @@ fn write_instance(dir: &Path, instance: &Instance) -> Result<()> {
         loader_version: &instance.loader_version,
         icon: &instance.icon,
         created_at: &instance.created_at,
+        pack_slug: &instance.pack_slug,
+        pack_version: &instance.pack_version,
+        pack_version_id: &instance.pack_version_id,
+        pack_files: &instance.pack_files,
     };
     fs::write(
         dir.join("instance.json"),
@@ -1577,6 +1587,51 @@ struct MrpackIndex {
     dependencies: std::collections::HashMap<String, String>,
 }
 
+struct PackSource {
+    work: PathBuf,
+    unpacked: PathBuf,
+    index: MrpackIndex,
+    version_id: String,
+    version_number: String,
+}
+
+impl PackSource {
+    /// Minecraft version, loader name and pinned loader version from the index.
+    fn target(&self) -> Result<(String, String, String)> {
+        let mc = self
+            .index
+            .dependencies
+            .get("minecraft")
+            .cloned()
+            .ok_or_else(|| anyhow!("Paket Minecraft sürümü belirtmiyor."))?;
+        let (loader, version) = if let Some(v) = self.index.dependencies.get("fabric-loader") {
+            ("fabric", v.clone())
+        } else if let Some(v) = self.index.dependencies.get("quilt-loader") {
+            ("quilt", v.clone())
+        } else if let Some(v) = self.index.dependencies.get("forge") {
+            ("forge", v.clone())
+        } else if let Some(v) = self.index.dependencies.get("neoforge") {
+            ("neoforge", v.clone())
+        } else {
+            ("vanilla", String::new())
+        };
+        Ok((mc, loader.to_string(), version))
+    }
+
+    fn file_paths(&self) -> Vec<String> {
+        self.index
+            .files
+            .iter()
+            .map(|file| file.path.clone())
+            .filter(|path| !path.is_empty() && !path.contains(".."))
+            .collect()
+    }
+
+    fn cleanup(&self) {
+        let _ = fs::remove_dir_all(&self.work);
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct MrpackFile {
     #[serde(default)]
@@ -1588,6 +1643,121 @@ struct MrpackFile {
 impl Core {
     /// Download a Modrinth modpack, unpack its index and turn it into a profile.
     pub fn install_modpack(&self, slug: &str) -> Result<String> {
+        let source = self.fetch_pack(slug)?;
+        let (mc, loader, loader_version) = source.target()?;
+        let name = if source.index.name.is_empty() {
+            slug.to_string()
+        } else {
+            source.index.name.clone()
+        };
+
+        let instance = self
+            .create_instance(&name, &mc, &loader, "")
+            .map_err(|e| anyhow!("profil oluşturulamadı: {e}"))?;
+        let dir = self.instance_dir(&instance.id);
+
+        let mut stored = instance.clone();
+        stored.loader_version = loader_version;
+        stored.pack_slug = slug.to_string();
+        stored.pack_version = source.version_number.clone();
+        stored.pack_version_id = source.version_id.clone();
+        stored.pack_files = source.file_paths();
+        let _ = write_instance(&dir, &stored);
+
+        self.log(format!(
+            "Modpack profili: {} (MC {mc}, {loader} {})",
+            instance.name, stored.loader_version
+        ));
+
+        let installed = self.apply_pack(&dir, &source, &[])?;
+        self.record_installed_slug(&instance.id, slug, &[source.index.name.clone()]);
+        let mods = self.content(&instance.id, "mod").len();
+        self.log(format!(
+            "Modpack hazır: {} · {installed} dosya · {mods} mod",
+            instance.name
+        ));
+        self.finish_pack();
+        source.cleanup();
+        Ok(instance.id)
+    }
+
+    /// Compare a profile's pack with the newest published version.
+    pub fn pack_status(&self, instance_id: &str) -> Option<PackStatus> {
+        let instance = read_instance(&self.instance_dir(instance_id))?;
+        if instance.pack_slug.is_empty() {
+            return None;
+        }
+        let versions: Vec<serde_json::Value> = self
+            .fetch_json(&format!(
+                "https://api.modrinth.com/v2/project/{}/version",
+                instance.pack_slug
+            ))
+            .ok()?;
+        let latest = versions.first()?;
+        let version_id = latest["id"].as_str().unwrap_or_default().to_string();
+        let version_number = latest["version_number"].as_str().unwrap_or_default().to_string();
+        Some(PackStatus {
+            slug: instance.pack_slug.clone(),
+            current: instance.pack_version.clone(),
+            latest: version_number,
+            update_available: !version_id.is_empty() && version_id != instance.pack_version_id,
+        })
+    }
+
+    /// Bring a profile up to the pack's newest version.
+    pub fn update_modpack(&self, instance_id: &str) -> Result<PackStatus> {
+        let dir = self.instance_dir(instance_id);
+        let mut instance = read_instance(&dir).ok_or_else(|| anyhow!("Profil bulunamadı."))?;
+        if instance.pack_slug.is_empty() {
+            return Err(anyhow!("Bu profil bir modpack değil."));
+        }
+        let source = self.fetch_pack(&instance.pack_slug)?;
+        if source.version_id == instance.pack_version_id {
+            source.cleanup();
+            return Err(anyhow!("Paket zaten güncel."));
+        }
+
+        self.set_status(|status| {
+            status.is_installing = true;
+            status.percent = 5;
+            status.status = "Modpack güncelleniyor…".to_string();
+            status.detail = source.version_number.clone();
+        });
+        self.log(format!(
+            "Modpack güncelleniyor: {} → {}",
+            instance.pack_version, source.version_number
+        ));
+
+        let added = self.apply_pack(&dir, &source, &instance.pack_files)?;
+        let (mc, loader, loader_version) = source.target()?;
+        instance.version = mc;
+        instance.loader = loader;
+        instance.loader_version = loader_version;
+        instance.pack_version = source.version_number.clone();
+        instance.pack_version_id = source.version_id.clone();
+        instance.pack_files = source.file_paths();
+        write_instance(&dir, &instance)?;
+
+        self.log(format!(
+            "Modpack güncellendi: {} · {added} yeni dosya",
+            instance.name
+        ));
+        self.finish_pack();
+        source.cleanup();
+        self.pack_status(instance_id)
+            .ok_or_else(|| anyhow!("Güncelleme sonrası durum okunamadı."))
+    }
+
+    fn finish_pack(&self) {
+        self.set_status(|status| {
+            status.is_installing = false;
+            status.percent = 0;
+            status.status = "Hazır".to_string();
+            status.detail.clear();
+        });
+    }
+
+    fn fetch_pack(&self, slug: &str) -> Result<PackSource> {
         let versions: Vec<serde_json::Value> = self.fetch_json(&format!(
             "https://api.modrinth.com/v2/project/{slug}/version"
         ))?;
@@ -1601,8 +1771,8 @@ impl Core {
                     .or_else(|| files.first())
             })
             .ok_or_else(|| anyhow!("Paket dosyası bulunamadı."))?;
-        let url = file["url"].as_str().unwrap_or_default();
-        let filename = file["filename"].as_str().unwrap_or("pack.mrpack");
+        let url = file["url"].as_str().unwrap_or_default().to_string();
+        let filename = file["filename"].as_str().unwrap_or("pack.mrpack").to_string();
         if url.is_empty() {
             return Err(anyhow!("Paket indirme adresi yok."));
         }
@@ -1611,8 +1781,8 @@ impl Core {
         let work = self.data_dir.join("modpacks").join(slug);
         let _ = fs::remove_dir_all(&work);
         fs::create_dir_all(&work)?;
-        let archive = work.join(filename);
-        self.download_to(url, &archive)
+        let archive = work.join(&filename);
+        self.download_to(&url, &archive)
             .map_err(|e| anyhow!("paket indirilemedi: {e}"))?;
 
         let unpacked = work.join("unpacked");
@@ -1620,44 +1790,35 @@ impl Core {
 
         let index_path = unpacked.join("modrinth.index.json");
         let index: MrpackIndex = serde_json::from_str(&fs::read_to_string(&index_path)?)?;
+        Ok(PackSource {
+            work,
+            unpacked,
+            index,
+            version_id: version["id"].as_str().unwrap_or_default().to_string(),
+            version_number: version["version_number"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+        })
+    }
 
-        let mc = index
-            .dependencies
-            .get("minecraft")
-            .cloned()
-            .ok_or_else(|| anyhow!("Paket Minecraft sürümü belirtmiyor."))?;
-        let (loader, loader_version) = if let Some(v) = index.dependencies.get("fabric-loader") {
-            ("fabric".to_string(), v.clone())
-        } else if let Some(v) = index.dependencies.get("quilt-loader") {
-            ("quilt".to_string(), v.clone())
-        } else if let Some(v) = index.dependencies.get("forge") {
-            ("forge".to_string(), v.clone())
-        } else if let Some(v) = index.dependencies.get("neoforge") {
-            ("neoforge".to_string(), v.clone())
-        } else {
-            ("vanilla".to_string(), String::new())
-        };
-        let name = if index.name.is_empty() {
-            slug.to_string()
-        } else {
-            index.name.clone()
-        };
-        let instance = self
-            .create_instance(&name, &mc, &loader, "")
-            .map_err(|e| anyhow!("profil oluşturulamadı: {e}"))?;
-        let dir = self.instance_dir(&instance.id);
+    /// Download index files into the profile, drop files that left the pack,
+    /// then copy overrides. `previous` lists the paths the old version had.
+    fn apply_pack(&self, dir: &Path, source: &PackSource, previous: &[String]) -> Result<usize> {
+        let index = &source.index;
+        let wanted: std::collections::HashSet<&str> =
+            index.files.iter().map(|file| file.path.as_str()).collect();
 
-        // Persist the loader version the pack pinned.
-        if !loader_version.is_empty() {
-            let mut stored = instance.clone();
-            stored.loader_version = loader_version.clone();
-            let _ = write_instance(&dir, &stored);
+        for path in previous {
+            if path.is_empty() || path.contains("..") || wanted.contains(path.as_str()) {
+                continue;
+            }
+            if let Ok(target) = self.checked_child(dir, path) {
+                if target.is_file() {
+                    let _ = fs::remove_file(&target);
+                }
+            }
         }
-
-        self.log(format!(
-            "Modpack profili: {} (MC {mc}, {loader} {loader_version})",
-            instance.name
-        ));
 
         let total = index.files.len().max(1);
         let mut installed = 0usize;
@@ -1680,32 +1841,20 @@ impl Core {
                 Err(error) => self.log(format!("{} indirilemedi: {error}", file.path)),
             }
             if position % 5 == 0 {
-                self.set_status(|s| {
-                    s.percent = 10 + (position as i64 * 80 / total as i64);
-                    s.status = "Modpack kuruluyor…".to_string();
-                    s.detail = format!("{position}/{total}");
+                self.set_status(|status| {
+                    status.is_installing = true;
+                    status.percent = 10 + (position as i64 * 80 / total as i64);
+                    status.status = "Modpack kuruluyor…".to_string();
+                    status.detail = format!("{position}/{total}");
                 });
             }
         }
 
         for overrides in ["overrides", "client-overrides"] {
-            copy_dir(&unpacked.join(overrides), &dir).map_err(|e| anyhow!("overrides: {e}"))?;
+            copy_dir(&source.unpacked.join(overrides), dir)
+                .map_err(|e| anyhow!("overrides: {e}"))?;
         }
-
-        self.record_installed_slug(&instance.id, slug, &[index.name.clone()]);
-        let mods = self.content(&instance.id, "mod").len();
-        self.log(format!(
-            "Modpack hazır: {} · {installed} dosya · {mods} mod",
-            instance.name
-        ));
-        self.set_status(|s| {
-            s.is_installing = false;
-            s.percent = 0;
-            s.status = "Modpack kuruldu.".to_string();
-            s.detail = instance.name.clone();
-        });
-        let _ = fs::remove_dir_all(&work);
-        Ok(instance.id)
+        Ok(installed)
     }
 }
 
@@ -1817,6 +1966,58 @@ mod tests {
         assert!(status.launch_instance_id.is_none());
         assert_eq!(status.error.as_deref(), Some("patlama"));
         assert!(core.delete_instance(&instance.id).is_ok());
+    }
+
+    #[test]
+    fn pack_metadata_survives_a_round_trip() {
+        let core = temp_core("pack-meta");
+        let instance = core.create_instance("Paket Profili", "1.19.2", "forge", "").unwrap();
+        let dir = core.instance_dir(&instance.id);
+
+        // `write_instance` used to persist only six fields, so a pack profile
+        // forgot which pack it came from and could never update.
+        let mut stored = instance.clone();
+        stored.pack_slug = "the-horrors-in-the-fog".into();
+        stored.pack_version = "1.1.9".into();
+        stored.pack_version_id = "abc123".into();
+        stored.pack_files = vec!["mods/a.jar".into(), "config/b.toml".into()];
+        write_instance(&dir, &stored).unwrap();
+
+        let read = read_instance(&dir).expect("profil");
+        assert_eq!(read.pack_slug, "the-horrors-in-the-fog");
+        assert_eq!(read.pack_version, "1.1.9");
+        assert_eq!(read.pack_version_id, "abc123");
+        assert_eq!(read.pack_files.len(), 2);
+    }
+
+    #[test]
+    fn pack_index_reports_loader_and_files() {
+        let index: MrpackIndex = serde_json::from_str(
+            r#"{
+                "name": "Test Paketi",
+                "files": [
+                    {"path": "mods/a.jar", "downloads": ["https://example.invalid/a.jar"]},
+                    {"path": "../evil.jar", "downloads": ["https://example.invalid/evil.jar"]}
+                ],
+                "dependencies": {"minecraft": "1.19.2", "forge": "43.3.5"}
+            }"#,
+        )
+        .unwrap();
+        let source = PackSource {
+            work: std::env::temp_dir().join("cl-pack-test"),
+            unpacked: std::env::temp_dir().join("cl-pack-test-unpacked"),
+            index,
+            version_id: "abc123".into(),
+            version_number: "1.1.9".into(),
+        };
+        let (mc, loader, version) = source.target().unwrap();
+        assert_eq!(mc, "1.19.2");
+        assert_eq!(loader, "forge");
+        assert_eq!(version, "43.3.5");
+
+        // Traversal paths never reach the file list used for cleanup.
+        let files = source.file_paths();
+        assert_eq!(files, vec!["mods/a.jar".to_string()]);
     }
 
     #[test]
