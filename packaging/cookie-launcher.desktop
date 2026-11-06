@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Cookie Launcher
+GenericName=Minecraft Launcher
+Comment=Minecraft başlatıcı — Fabric, Quilt, Forge ve NeoForge profilleri
+Exec=cookie-launcher
+Icon=cookie-launcher
+Terminal=false
+Categories=Game;
+Keywords=minecraft;launcher;fabric;forge;neoforge;quilt;
+StartupNotify=true
+StartupWMClass=cookie-launcher

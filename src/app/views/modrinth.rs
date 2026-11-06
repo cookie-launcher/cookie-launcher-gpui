@@ -151,24 +151,99 @@ impl AppView {
             )
             .child(
                 h_flex()
-                    .id("sort-select")
                     .items_center()
-                    .gap_2()
-                    .h(px(30.))
-                    .px_3()
-                    .rounded(px(5.))
-                    .bg(cocoa.surface_2)
-                    .border_1()
-                    .border_color(cocoa.line_strong)
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| this.cycle_sort(cx)))
-                    .child(
-                        div()
-                            .text_size(TEXT_12)
-                            .text_color(cocoa.text_2)
-                            .child(sort_label),
-                    )
-                    .child(Icon::new(IconName::ChevronDown).size(px(13.)).text_color(cocoa.text_3)),
+                    .gap_1()
+                    .when(self.sort_open, |this| {
+                        this.child(
+                            h_flex()
+                                .gap_1()
+                                .p_1()
+                                .rounded(px(6.))
+                                .bg(cocoa.surface_2)
+                                .border_1()
+                                .border_color(cocoa.line_strong)
+                                .children(
+                                    [
+                                        ("relevance", "İlgi"),
+                                        ("downloads", "İndirme"),
+                                        ("follows", "Takipçi"),
+                                        ("newest", "Yeni"),
+                                        ("updated", "Güncel"),
+                                    ]
+                                    .into_iter()
+                                    .map(|(value, label)| {
+                                        let selected = self.search_sort == value;
+                                        div()
+                                            .id(SharedString::from(format!("sort-{value}")))
+                                            .px_2()
+                                            .py_1()
+                                            .rounded(px(4.))
+                                            .text_size(TEXT_11)
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(if selected {
+                                                cocoa.amber_ink
+                                            } else {
+                                                cocoa.text_3
+                                            })
+                                            .bg(if selected { cocoa.amber } else { cocoa.surface_1 })
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.search_sort = value.to_string();
+                                                this.sort_open = false;
+                                                this.search_modrinth(cx);
+                                            }))
+                                            .child(label)
+                                    }),
+                                )
+                                .child(
+                                    div()
+                                        .id("sort-close")
+                                        .px_2()
+                                        .py_1()
+                                        .rounded(px(4.))
+                                        .text_size(TEXT_11)
+                                        .text_color(cocoa.text_3)
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.sort_open = false;
+                                            cx.notify();
+                                        }))
+                                        .child("×"),
+                                ),
+                        )
+                    })
+                    .when(!self.sort_open, |this| this.child(
+                        h_flex()
+                            .id("sort-select")
+                            .items_center()
+                            .gap_2()
+                            .h(px(30.))
+                            .px_3()
+                            .rounded(px(5.))
+                            .bg(cocoa.surface_2)
+                            .border_1()
+                            .border_color(cocoa.line_strong)
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.sort_open = !this.sort_open;
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .text_size(TEXT_12)
+                                    .text_color(cocoa.text_2)
+                                    .child(sort_label),
+                            )
+                            .child(
+                                Icon::new(if self.sort_open {
+                                    IconName::ChevronUp
+                                } else {
+                                    IconName::ChevronDown
+                                })
+                                .size(px(13.))
+                                .text_color(cocoa.text_3),
+                            ),
+                    )),
             )
             .child(
                 h_flex()

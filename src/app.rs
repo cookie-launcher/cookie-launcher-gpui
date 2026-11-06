@@ -162,6 +162,8 @@ pub struct AppView {
     pub search_kind: SearchKind,
     pub search_sort: String,
     pub hide_downloaded: bool,
+    /// The sort dropdown is expanded.
+    pub sort_open: bool,
     pub install_dependencies: bool,
     /// Which installed-content category the Modrinth panel shows.
     pub content_kind: String,
@@ -293,6 +295,7 @@ impl AppView {
             search_kind: SearchKind::Mod,
             search_sort: "downloads".to_string(),
             hide_downloaded: false,
+            sort_open: false,
             install_dependencies: true,
             content_kind: "mod".to_string(),
             content_items: Vec::new(),
@@ -372,6 +375,10 @@ impl AppView {
                             "search" => window.dispatch_action(Box::new(FocusSearch), cx),
                             "shortcuts" => window.dispatch_action(Box::new(ShowShortcuts), cx),
                             "details" => {}
+                            "sort" => {
+                                this.sort_open = true;
+                                cx.notify();
+                            }
                             "lightbox" => {
                                 if let Some(shot) = this.screenshots.first().cloned() {
                                     this.open_lightbox(shot.name, cx);

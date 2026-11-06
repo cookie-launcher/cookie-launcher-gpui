@@ -82,12 +82,25 @@ press) ve `ease` = cubic-bezier(0.25, 0.1, 0.25, 1) yaklaşımı.
 `Ctrl+1…6` sekmeler · `Ctrl+K` arama · `Ctrl+Enter` başlat · `?` kısayollar
 penceresi. GPUI `actions!` + `cx.bind_keys` + kök `key_context("Launcher")`.
 
+## Paketleme
+
+```bash
+./packaging/install.sh              # ~/.local/bin + ikon + masaüstü girdisi
+PREFIX=/usr/local sudo ./packaging/install.sh
+```
+
+`packaging/install.sh` release derler, `cookie-launcher` adıyla `bin/`e kurar,
+ikonu `share/icons/hicolor/256x256/apps/` altına, `cookie-launcher.desktop`
+girdisini `share/applications/` altına kopyalar ve önbellekleri tazeler.
+Uygulama açılışta `set_app_identity("cookie-launcher", ...)` çağırdığı için
+Wayland app id'si masaüstü girdisiyle eşleşir.
+
 ## Samimi olarak eksik olanlar
 
 - **Profil detay ekranı** (`pds-*`): içerik/sürüm/dünya/log/not sekmeleri
 - Modpack içeriğini sonradan güncelleme
 - `Noise_XX` uçtan uca şifreleme (CLT1 kimlik doğrulama var, taşıma şifrelemesi yok)
-- Uygulama ikonu / paketleme (AppImage, deb, .desktop)
+- AppImage / deb paketi (şu an ikon + `.desktop` + kurulum betiği var)
 
 ## Testler
 

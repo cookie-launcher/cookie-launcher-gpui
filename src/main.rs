@@ -433,6 +433,9 @@ fn main() {
     application()
         .with_assets(assets::AppAssets)
         .run(|cx| {
+            // Identity first: the Wayland app id / desktop association come from
+            // this, and the packaged .desktop file matches it.
+            cx.set_app_identity("cookie-launcher", "Cookie Launcher");
             gpui_kit::init(cx);
             theme::install(cx);
             app::init_keybindings(cx);
