@@ -515,12 +515,17 @@ impl AppView {
 
         self.status = status;
 
-        if let Some(message) = self.status.error.clone() {
-            if self.error_shown.as_deref() != Some(message.as_str()) {
-                self.toast(message.clone(), ToastKind::Error, cx);
-                self.error_shown = Some(message);
-                self.clear_error();
+        match self.status.error.clone() {
+            Some(message) => {
+                if self.error_shown.as_deref() != Some(message.as_str()) {
+                    self.toast(message.clone(), ToastKind::Error, cx);
+                    self.error_shown = Some(message);
+                    self.clear_error();
+                }
             }
+            // The error was cleared (a new launch started): forget the dedupe
+            // key so a later, identical failure still shows a toast.
+            None => self.error_shown = None,
         }
 
         if let Some(toast) = &self.toast {
@@ -667,6 +672,9 @@ impl AppView {
             |core| core.screenshots(),
             |this, result, cx| {
                 this.screenshots = result;
+                let live: std::collections::HashSet<String> =
+                    this.screenshots.iter().map(|s| s.name.clone()).collect();
+                this.thumbs.retain(|name, _| live.contains(name));
                 this.load_thumbnails(cx);
                 cx.notify();
             },

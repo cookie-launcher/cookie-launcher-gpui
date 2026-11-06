@@ -661,7 +661,11 @@ impl AppView {
                         this.hits = hits;
                         this.load_mod_icons(cx);
                     }
-                    Err(error) => this.toast(error.to_string(), ToastKind::Error, cx),
+                    Err(error) => {
+                        this.hits.clear();
+                        this.search_total = 0;
+                        this.toast(error.to_string(), ToastKind::Error, cx)
+                    }
                 }
                 cx.notify();
             },
@@ -684,7 +688,11 @@ impl AppView {
                             this.set_active(id, cx);
                             this.refresh_instances(cx);
                         }
-                        Err(error) => this.toast(error.to_string(), ToastKind::Error, cx),
+                        Err(error) => {
+                        this.hits.clear();
+                        this.search_total = 0;
+                        this.toast(error.to_string(), ToastKind::Error, cx)
+                    }
                     }
                     cx.notify();
                 },
@@ -712,7 +720,11 @@ impl AppView {
                         this.toast(installed.join(", "), ToastKind::Success, cx);
                         this.refresh_instances(cx);
                     }
-                    Err(error) => this.toast(error.to_string(), ToastKind::Error, cx),
+                    Err(error) => {
+                        this.hits.clear();
+                        this.search_total = 0;
+                        this.toast(error.to_string(), ToastKind::Error, cx)
+                    }
                 }
                 cx.notify();
             },
