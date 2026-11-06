@@ -86,6 +86,18 @@ penceresi. GPUI `actions!` + `cx.bind_keys` + kök `key_context("Launcher")`.
 
 ## Paketleme
 
+Sürüm paketleri CI'da üretilir: **https://github.com/cookie-launcher/cookie-launcher-gpui/releases**
+
+| Dosya | Ne |
+| --- | --- |
+| `cookie-launcher-<sürüm>-x86_64.AppImage` | tek dosya, `chmod +x` sonrası çalışır |
+| `cookie-launcher_<sürüm>_amd64.deb` | `sudo apt install ./cookie-launcher_*_amd64.deb` |
+| `cookie-launcher-<sürüm>.tar.gz` | taşınabilir klasör + `install.sh` |
+
+Workflow: `v*` etiketi push edilince (veya `workflow_dispatch` ile) çalışır,
+testleri koşar, release derlemesini alır ve üç paketi sürüme yükler.
+`.github/workflows/ci.yml` her push/PR'da derleme + test + clippy çalıştırır.
+
 ```bash
 ./packaging/install.sh              # ~/.local/bin + ikon + masaüstü girdisi
 PREFIX=/usr/local sudo ./packaging/install.sh
