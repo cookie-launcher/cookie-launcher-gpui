@@ -22,6 +22,7 @@ use crate::theme::Cocoa;
 use crate::widgets::*;
 
 pub mod views;
+mod views_profile;
 
 actions!(
     launcher,
@@ -57,6 +58,8 @@ pub fn init_keybindings(cx: &mut App) {
 pub enum Tab {
     Play,
     Instances,
+    /// Full profile page: content, worlds and logs for one profile.
+    Profile,
     Modrinth,
     Gallery,
     Console,
@@ -76,7 +79,7 @@ impl Tab {
     pub fn label(self) -> &'static str {
         match self {
             Tab::Play => "Oyna",
-            Tab::Instances => "Profiller",
+            Tab::Instances | Tab::Profile => "Profiller",
             Tab::Modrinth => "Modlar",
             Tab::Gallery => "Galeri",
             Tab::Console => "Konsol",
@@ -87,7 +90,7 @@ impl Tab {
     pub fn icon(self) -> IconName {
         match self {
             Tab::Play => IconName::Play,
-            Tab::Instances => IconName::Folder,
+            Tab::Instances | Tab::Profile => IconName::Folder,
             Tab::Modrinth => IconName::Blocks,
             Tab::Gallery => IconName::Image,
             Tab::Console => IconName::Terminal,
@@ -98,7 +101,7 @@ impl Tab {
     pub fn shortcut(self) -> &'static str {
         match self {
             Tab::Play => "1",
-            Tab::Instances => "2",
+            Tab::Instances | Tab::Profile => "2",
             Tab::Modrinth => "3",
             Tab::Gallery => "4",
             Tab::Console => "5",
@@ -368,7 +371,12 @@ impl AppView {
                             "friends" => window.dispatch_action(Box::new(GoFriends), cx),
                             "search" => window.dispatch_action(Box::new(FocusSearch), cx),
                             "shortcuts" => window.dispatch_action(Box::new(ShowShortcuts), cx),
-                            "details" => this.profile_details(window, cx),
+                            "details" => {}
+                            "profile" => {
+                                if let Some(id) = this.active_id.clone() {
+                                    this.open_profile(id, cx);
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -932,6 +940,18 @@ impl AppView {
 
     // -- chrome ------------------------------------------------------------
 
+    /// Open the full profile page for `id`.
+    pub fn open_profile(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.active_id.as_deref() != Some(id.as_str()) {
+            self.set_active(id, cx);
+        } else {
+            self.refresh_worlds(cx);
+            self.refresh_content(cx);
+        }
+        self.tab = Tab::Profile;
+        cx.notify();
+    }
+
     fn go_to(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.tab = tab;
         match tab {
@@ -947,86 +967,6 @@ impl AppView {
             _ => {}
         }
         cx.notify();
-    }
-
-    /// Facts about the active profile, straight from disk.
-    fn profile_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(instance) = self.active_instance().cloned() else {
-            return;
-        };
-        let path = self.core.instance_dir(&instance.id);
-        let instance_id = instance.id.clone();
-        let worlds = self.worlds.len();
-        let counts = self.content_counts;
-        let rows = [
-            ("Ad", instance.name.clone()),
-            ("Klasör", instance.id.clone()),
-            ("Sürüm", instance.version.clone()),
-            (
-                "Yükleyici",
-                if instance.loader_version.is_empty() {
-                    instance.loader_label().to_string()
-                } else {
-                    format!("{} {}", instance.loader_label(), instance.loader_version)
-                },
-            ),
-            ("Mod", format!("{} (shader {}, doku {})", counts[0], counts[1], counts[2])),
-            ("Dünya", worlds.to_string()),
-            ("Oluşturuldu", instance.created_at.clone()),
-            ("Yol", path.to_string_lossy().to_string()),
-        ];
-        let entity = cx.entity();
-        window.open_dialog(cx, move |dialog, _, app| {
-            let cocoa = Cocoa::get(app);
-            let mut list = v_flex().gap_1();
-            for (label, value) in &rows {
-                list = list.child(
-                    h_flex()
-                        .w_full()
-                        .items_start()
-                        .gap_3()
-                        .py_1()
-                        .child(
-                            div()
-                                .w(px(90.))
-                                .flex_shrink_0()
-                                .text_size(TEXT_11)
-                                .text_color(cocoa.text_3)
-                                .child(*label),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_size(TEXT_12)
-                                .text_color(cocoa.text_2)
-                                .child(value.clone()),
-                        ),
-                );
-            }
-            let folder = entity.clone();
-            let folder_path = format!("instances/{}", instance_id);
-            dialog
-                .title("Profil detayları")
-                .w(px(520.))
-                .child(list)
-                .footer(
-                    gpui_kit::component::dialog::DialogFooter::new()
-                        .child(
-                            Button::new("details-folder")
-                                .label("Klasörü aç")
-                                .on_click(move |_, _, cx| {
-                                    let path = folder_path.clone();
-                                    folder.update(cx, |this, cx| this.open_folder(&path, cx));
-                                }),
-                        )
-                        .child(
-                            Button::new("details-close")
-                                .label("Kapat")
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        ),
-                )
-        });
     }
 
     fn shortcuts_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1180,7 +1120,8 @@ impl AppView {
         let mut menu = v_flex().gap(px(3.)).px(px(10.)).py(px(6.)).w_full();
 
         for tab in Tab::ALL {
-            let selected = self.tab == tab;
+            let selected = self.tab == tab
+                || (tab == Tab::Instances && self.tab == Tab::Profile);
             let icon_color = if selected { cocoa.amber } else { cocoa.text_3 };
             let label_color = if selected { foreground } else { cocoa.text_3 };
             let entity = cx.entity();
@@ -1611,6 +1552,7 @@ impl Render for AppView {
         let content = match self.tab {
             Tab::Play => self.render_play(window, cx),
             Tab::Instances => self.render_instances(window, cx),
+            Tab::Profile => self.render_profile(window, cx),
             Tab::Modrinth => self.render_modrinth(window, cx),
             Tab::Gallery => self.render_gallery(window, cx),
             Tab::Console => self.render_console(window, cx),

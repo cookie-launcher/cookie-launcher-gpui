@@ -342,6 +342,31 @@ impl Core {
         shots
     }
 
+    /// Zip one world into `<instance>/backups/<name>-<stamp>.zip`.
+    pub fn backup_world(&self, instance_id: &str, world: &str) -> Result<PathBuf> {
+        let dir = self.instance_dir(instance_id);
+        let source = self.checked_child(&dir.join("saves"), world)?;
+        if !source.is_dir() {
+            return Err(anyhow!("Dünya bulunamadı: {world}"));
+        }
+        let backups = dir.join("backups");
+        fs::create_dir_all(&backups)?;
+        let stamp = now_epoch();
+        let safe: String = world
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect();
+        let target = backups.join(format!("{safe}-{stamp}.zip"));
+        let file = fs::File::create(&target)?;
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        add_dir_to_zip(&mut zip, &source, &source, options)?;
+        zip.finish()?;
+        self.log(format!("Dünya yedeklendi: {}", target.display()));
+        Ok(target)
+    }
+
     pub fn screenshot_bytes(&self, name: &str) -> Result<Vec<u8>> {
         let path = self.checked_child(&self.mc_dir.join("screenshots"), name)?;
         Ok(fs::read(path)?)
@@ -1762,6 +1787,28 @@ mod tests {
     }
 
     #[test]
+    fn backs_up_a_world_into_a_zip() {
+        let core = temp_core("backup");
+        core.create_instance("Yedek Profili", "1.21.4", "vanilla", "").unwrap();
+        let saves = core.instance_dir("yedek_profili").join("saves").join("Dünyam");
+        fs::create_dir_all(&saves).unwrap();
+        fs::write(saves.join("level.dat"), b"level").unwrap();
+        fs::create_dir_all(saves.join("region")).unwrap();
+        fs::write(saves.join("region").join("r.0.0.mca"), b"region").unwrap();
+
+        let path = core.backup_world("yedek_profili", "Dünyam").unwrap();
+        assert!(path.exists());
+        assert_eq!(path.extension().and_then(|e| e.to_str()), Some("zip"));
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(&bytes[..2], b"PK", "gerçek bir zip olmalı");
+        assert!(bytes.len() > 100);
+
+        // Unknown worlds and traversal names are rejected.
+        assert!(core.backup_world("yedek_profili", "Yok").is_err());
+        assert!(core.backup_world("yedek_profili", "../evil").is_err());
+    }
+
+    #[test]
     fn adds_and_removes_friends_persistently() {
         let core = temp_core("friends");
         assert!(core.add_friend("abc123").is_ok(), "küçük harf kabul edilmeli");
@@ -2131,4 +2178,25 @@ mod lan_tests {
         let text = fs::read_to_string(root.join("server.properties")).unwrap();
         assert_eq!(text.matches("online-mode").count(), 1);
     }
+}
+
+fn add_dir_to_zip(
+    zip: &mut zip::ZipWriter<fs::File>,
+    root: &Path,
+    dir: &Path,
+    options: zip::write::SimpleFileOptions,
+) -> Result<()> {
+    for entry in fs::read_dir(dir)?.flatten() {
+        let path = entry.path();
+        let relative = path.strip_prefix(root).unwrap_or(&path);
+        if path.is_dir() {
+            zip.add_directory(format!("{}/", relative.display()), options)?;
+            add_dir_to_zip(zip, root, &path, options)?;
+        } else {
+            zip.start_file(relative.to_string_lossy().to_string(), options)?;
+            let mut file = fs::File::open(&path)?;
+            std::io::copy(&mut file, zip)?;
+        }
+    }
+    Ok(())
 }

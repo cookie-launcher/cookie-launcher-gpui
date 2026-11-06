@@ -221,6 +221,18 @@ impl AppView {
                             .gap_2()
                             .flex_shrink_0()
                             .child(
+                                Button::new(format!("detail-{id}"))
+                                    .small()
+                                    .ghost()
+                                    .label("Detay")
+                                    .on_click({
+                                        let id = id.clone();
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.open_profile(id.clone(), cx);
+                                        })
+                                    }),
+                            )
+                            .child(
                                 Button::new(format!("activate-{id}"))
                                     .small()
                                     .when(selected, |this| this.ghost())
