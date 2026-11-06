@@ -19,6 +19,11 @@ ureq = "3"
 socket2 = "0.6"
 anyhow = "1"
 
+[dev-dependencies]
+# Enables the headless test platform and key simulation. Same source and
+# version as the normal dependency, so nothing new enters the graph.
+gpui_test = { package = "gpui-pre", version = "=0.3.11", features = ["test-support"] }
+
 [profile.dev]
 opt-level = 1
 

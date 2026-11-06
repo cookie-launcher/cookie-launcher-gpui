@@ -8,6 +8,8 @@ mod assets;
 mod app;
 mod core;
 mod launch;
+#[cfg(test)]
+mod keys_test;
 mod relay;
 mod social;
 mod theme;

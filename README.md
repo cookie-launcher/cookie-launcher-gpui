@@ -104,6 +104,7 @@ Wayland app id'si masaüstü girdisiyle eşleşir.
 
 - **Profil detay ekranı** (`pds-*`): içerik/sürüm/dünya/log/not sekmeleri
 - `Noise_XX` uçtan uca şifreleme (CLT1 kimlik doğrulama var, taşıma şifrelemesi yok)
+- Klavye testleri başsız pencere kullanıyor; fiziksel klavye enjeksiyonu bu makinede yok
 - AppImage/deb üretimi için `appimagetool`/`dpkg-deb` gerekli (betik hazır, araç yoksa tarball üretiyor)
 
 ## Testler
@@ -123,6 +124,10 @@ Wayland app id'si masaüstü girdisiyle eşleşir.
 | `parses_the_minecraft_lan_broadcast` | UDP 4445 duyuru paketi (`[MOTD]…[/MOTD][AD]port[/AD]`) |
 | `forces_offline_mode_and_keeps_other_properties` | `online-mode=false`, diğer ayarlar korunur |
 | `hide_downloaded_filters_only_installed_projects` | "İndirilenleri gizle" filtresi |
+| `ctrl_number_switches_tabs` | gerçek tuş gönderimiyle sekme kısayolları |
+| `ctrl_k_opens_modrinth_and_focuses_search` | Ctrl+K → sekme + arama odağı |
+| `shortcuts_still_work_after_a_tab_switch` | odak kaybı regresyonu |
+| `unbound_key_does_not_change_tab` | bağlanmamış tuş sekme değiştirmiyor |
 | `mac_is_deterministic_and_role_bound` | CLT1 MAC rol ayrımı |
 | `hex_roundtrip` | ticket kodlaması |
 | `handshake_accepts_guest_and_rejects_replay` | gerçek TCP el sıkışması + replay reddi |

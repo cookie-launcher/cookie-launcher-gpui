@@ -1721,12 +1721,42 @@ impl Render for AppView {
             .id("launcher-root")
             .key_context("Launcher")
             .track_focus(&self.root_focus)
-            .on_action(cx.listener(|this, _: &GoPlay, _, cx| this.go_to(Tab::Play, cx)))
-            .on_action(cx.listener(|this, _: &GoInstances, _, cx| this.go_to(Tab::Instances, cx)))
-            .on_action(cx.listener(|this, _: &GoModrinth, _, cx| this.go_to(Tab::Modrinth, cx)))
-            .on_action(cx.listener(|this, _: &GoGallery, _, cx| this.go_to(Tab::Gallery, cx)))
-            .on_action(cx.listener(|this, _: &GoConsole, _, cx| this.go_to(Tab::Console, cx)))
-            .on_action(cx.listener(|this, _: &GoFriends, _, cx| this.go_to(Tab::Friends, cx)))
+            .on_action(cx.listener(|this, _: &GoPlay, window, cx| {
+                this.go_to(Tab::Play, cx);
+                // The old tab's inputs unmount with it, which drops focus and
+                // with it the key context — keep the shortcuts alive.
+                this.root_focus.focus(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &GoInstances, window, cx| {
+                this.go_to(Tab::Instances, cx);
+                // The old tab's inputs unmount with it, which drops focus and
+                // with it the key context — keep the shortcuts alive.
+                this.root_focus.focus(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &GoModrinth, window, cx| {
+                this.go_to(Tab::Modrinth, cx);
+                // The old tab's inputs unmount with it, which drops focus and
+                // with it the key context — keep the shortcuts alive.
+                this.root_focus.focus(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &GoGallery, window, cx| {
+                this.go_to(Tab::Gallery, cx);
+                // The old tab's inputs unmount with it, which drops focus and
+                // with it the key context — keep the shortcuts alive.
+                this.root_focus.focus(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &GoConsole, window, cx| {
+                this.go_to(Tab::Console, cx);
+                // The old tab's inputs unmount with it, which drops focus and
+                // with it the key context — keep the shortcuts alive.
+                this.root_focus.focus(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &GoFriends, window, cx| {
+                this.go_to(Tab::Friends, cx);
+                // The old tab's inputs unmount with it, which drops focus and
+                // with it the key context — keep the shortcuts alive.
+                this.root_focus.focus(window, cx);
+            }))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 this.tab = Tab::Modrinth;
                 this.search_input.focus_handle(cx).focus(window, cx);
