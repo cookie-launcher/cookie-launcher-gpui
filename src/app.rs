@@ -942,6 +942,7 @@ impl AppView {
             return;
         };
         let path = self.core.instance_dir(&instance.id);
+        let instance_id = instance.id.clone();
         let worlds = self.worlds.len();
         let counts = self.content_counts;
         let rows = [
@@ -991,7 +992,7 @@ impl AppView {
                 );
             }
             let folder = entity.clone();
-            let path_value = path.clone();
+            let folder_path = format!("instances/{}", instance_id);
             dialog
                 .title("Profil detayları")
                 .w(px(520.))
@@ -1002,7 +1003,8 @@ impl AppView {
                             Button::new("details-folder")
                                 .label("Klasörü aç")
                                 .on_click(move |_, _, cx| {
-                                    folder.update(cx, |this, cx| this.open_folder("", cx));
+                                    let path = folder_path.clone();
+                                    folder.update(cx, |this, cx| this.open_folder(&path, cx));
                                 }),
                         )
                         .child(

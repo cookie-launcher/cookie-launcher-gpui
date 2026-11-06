@@ -154,6 +154,17 @@ impl Core {
         if name.is_empty() {
             return Err(anyhow!("Geçersiz profil adı."));
         }
+        let version = version.trim();
+        // Same guard the Python core had: the value becomes a directory name
+        // inside `versions/`, so keep it to an id-shaped string.
+        if version.is_empty()
+            || version.len() > 40
+            || !version
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
+            return Err(anyhow!("Geçersiz Minecraft sürümü: “{version}”."));
+        }
         if self.instances().iter().any(|i| i.name.eq_ignore_ascii_case(name)) {
             return Err(anyhow!("Bu isimde bir profil zaten var."));
         }
@@ -544,7 +555,7 @@ impl Core {
             if !seen.insert(slug.clone()) {
                 continue;
             }
-            let versions = self.project_versions(&slug, &instance)?;
+            let versions = self.project_versions(&slug, &instance, kind)?;
             let Some(version) = versions.first() else {
                 self.log(format!("{slug}: uygun sürüm yok"));
                 continue;
@@ -609,9 +620,17 @@ impl Core {
         self.fetch_json::<Project>(&url).ok()?.slug
     }
 
-    fn project_versions(&self, slug: &str, instance: &Instance) -> Result<Vec<ProjectVersion>> {
+    fn project_versions(
+        &self,
+        slug: &str,
+        instance: &Instance,
+        kind: &str,
+    ) -> Result<Vec<ProjectVersion>> {
+        // Shaders and resource packs are not loader-specific: filtering them by
+        // the profile's loader returns nothing.
         let loader = instance.loader.to_lowercase();
-        let loaders = if loader == "vanilla" || loader.is_empty() {
+        let loaders = if loader == "vanilla" || loader.is_empty() || !matches!(kind, "mod" | "modpack")
+        {
             String::new()
         } else {
             format!("&loaders=%5B%22{loader}%22%5D")
@@ -694,12 +713,10 @@ impl Core {
             Ok(version) => version,
             Err(error) => {
                 self.set_status(|s| {
-                    s.is_installing = false;
-                    s.is_running = false;
                     s.status = "Başlatma Hatası!".to_string();
                     s.detail = error.to_string();
-                    s.error = Some(error.to_string());
                 });
+                self.finish_launch(Some(error.to_string()));
                 self.log(format!("HATA: {error}"));
                 return Err(error);
             }
@@ -724,13 +741,10 @@ impl Core {
             };
             if let Err(error) = core.launch_now(options) {
                 core.set_status(|s| {
-                    s.is_installing = false;
-                    s.is_running = false;
-                    s.percent = 0;
                     s.status = "Başlatma Hatası!".to_string();
                     s.detail = error.to_string();
-                    s.error = Some(error.to_string());
                 });
+                core.finish_launch(Some(error.to_string()));
                 core.log(format!("HATA: {error}"));
             }
         });
@@ -898,6 +912,31 @@ impl Core {
             .ok_or_else(|| anyhow!("{} yükleyici sürümü bulunamadı", loader))
     }
 
+    /// Clear the transient launch state after the game exits or a launch
+    /// fails. Without this `launch_instance_id` sticks around and the profile
+    /// can never be deleted again.
+    pub(crate) fn finish_launch(&self, error: Option<String>) {
+        self.clear_launch_pid();
+        self.set_status(|status| {
+            status.is_installing = false;
+            status.is_running = false;
+            status.percent = 0;
+            status.minecraft_pid = None;
+            status.launch_instance_id = None;
+            status.current_file.clear();
+            match &error {
+                Some(message) => {
+                    status.status = "Oyun beklenmedik şekilde kapandı.".to_string();
+                    status.error = Some(message.clone());
+                }
+                None => {
+                    status.status = "Oyun kapandı.".to_string();
+                    status.detail.clear();
+                }
+            }
+        });
+    }
+
     pub fn stop(&self) {
         if let Ok(mut pid) = self.launch_pid.lock() {
             if let Some(pid) = pid.take() {
@@ -911,6 +950,7 @@ impl Core {
                     s.is_running = false;
                     s.is_installing = false;
                     s.minecraft_pid = None;
+                    s.launch_instance_id = None;
                     s.status = "Oyun kapatıldı.".to_string();
                 });
             }
@@ -1522,17 +1562,13 @@ impl Core {
             ("fabric".to_string(), v.clone())
         } else if let Some(v) = index.dependencies.get("quilt-loader") {
             ("quilt".to_string(), v.clone())
-        } else if index.dependencies.contains_key("forge") {
-            ("forge".to_string(), String::new())
+        } else if let Some(v) = index.dependencies.get("forge") {
+            ("forge".to_string(), v.clone())
+        } else if let Some(v) = index.dependencies.get("neoforge") {
+            ("neoforge".to_string(), v.clone())
         } else {
             ("vanilla".to_string(), String::new())
         };
-        if loader == "forge" {
-            return Err(anyhow!(
-                "Bu modpack Forge istiyor; Forge desteği henüz yok."
-            ));
-        }
-
         let name = if index.name.is_empty() {
             slug.to_string()
         } else {
@@ -1668,6 +1704,59 @@ mod tests {
         assert!(second.is_err(), "aynı isim reddedilmeli");
         let third = core.create_instance("Bambaşka", "1.21.4", "vanilla", "").unwrap();
         assert_ne!(first.id, third.id);
+    }
+
+    #[test]
+    fn finishing_a_launch_unblocks_profile_deletion() {
+        let core = temp_core("finish");
+        let instance = core.create_instance("Kilitli Profil", "1.21.4", "vanilla", "").unwrap();
+        core.set_status(|status| {
+            status.is_running = true;
+            status.minecraft_pid = Some(1234);
+            status.launch_instance_id = Some(instance.id.clone());
+        });
+
+        // While the game is considered running the profile is protected.
+        assert!(core.delete_instance(&instance.id).is_err());
+
+        // The exit path must clear every transient field…
+        core.finish_launch(None);
+        let status = core.status();
+        assert!(!status.is_running);
+        assert!(status.minecraft_pid.is_none());
+        assert!(status.launch_instance_id.is_none());
+
+        // …and deletion works again.
+        assert!(core.delete_instance(&instance.id).is_ok());
+        assert!(core.instances().is_empty());
+    }
+
+    #[test]
+    fn failed_launch_also_unblocks_deletion() {
+        let core = temp_core("finish-err");
+        let instance = core.create_instance("Hatalı Profil", "1.21.4", "vanilla", "").unwrap();
+        core.set_status(|status| {
+            status.is_installing = true;
+            status.launch_instance_id = Some(instance.id.clone());
+        });
+        core.finish_launch(Some("patlama".to_string()));
+        let status = core.status();
+        assert!(!status.is_installing);
+        assert!(status.launch_instance_id.is_none());
+        assert_eq!(status.error.as_deref(), Some("patlama"));
+        assert!(core.delete_instance(&instance.id).is_ok());
+    }
+
+    #[test]
+    fn rejects_bad_minecraft_versions() {
+        let core = temp_core("versions-guard");
+        for bad in ["", "  ", "1.21.4 beta", "../evil", "a/b", &"9".repeat(41)] {
+            assert!(
+                core.create_instance("Profil", bad, "vanilla", "").is_err(),
+                "“{bad}” reddedilmeli"
+            );
+        }
+        assert!(core.create_instance("Profil", "1.21.4", "vanilla", "").is_ok());
     }
 
     #[test]

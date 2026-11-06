@@ -604,22 +604,13 @@ impl Core {
         let core = self.clone();
         std::thread::spawn(move || {
             let status = child.wait();
-            core.clear_launch_pid();
             let code = status.as_ref().ok().and_then(|s| s.code()).unwrap_or(-1);
-            core.set_status(|s| {
-                s.is_installing = false;
-                s.is_running = false;
-                s.percent = 0;
-                s.minecraft_pid = None;
-                if code == 0 {
-                    s.status = "Oyun kapandı.".to_string();
-                    s.detail = String::new();
-                } else {
-                    s.status = "Oyun beklenmedik şekilde kapandı.".to_string();
-                    s.detail = format!("Çıkış kodu: {code}");
-                    s.error = Some(format!("Oyun çıkış kodu {code} ile kapandı."));
-                }
-            });
+            if code != 0 {
+                core.set_status(|s| s.detail = format!("Çıkış kodu: {code}"));
+                core.finish_launch(Some(format!("Oyun çıkış kodu {code} ile kapandı.")));
+            } else {
+                core.finish_launch(None);
+            }
             core.log(format!("Oyun kapandı (kod {code})."));
         });
 

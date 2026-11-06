@@ -211,20 +211,25 @@ fn main() {
         let slug = args.get(pos + 1).cloned().unwrap_or_default();
         let kind = args.get(pos + 2).cloned().unwrap_or_else(|| "mod".to_string());
         let core = core::Core::new();
+        let probe_name = format!("Install Probe {}", std::process::id());
         let instance = core
-            .create_instance("Install Probe", "1.21.4", "fabric", "")
+            .create_instance(&probe_name, "1.21.4", "fabric", "")
             .expect("profile");
         match core.install(&slug, &instance.id, &kind, true) {
             Ok(files) => {
-                let mods = core.content(&instance.id, "mod");
-                println!("INSTALLED {slug}: {} dosya, {} mod", files.len(), mods.len());
-                for file in mods.iter().take(6) {
+                let entries = core.content(&instance.id, &kind);
+                println!(
+                    "INSTALLED {slug} ({kind}): {} dosya, {} kayıt",
+                    files.len(),
+                    entries.len()
+                );
+                for file in entries.iter().take(6) {
                     println!("  {} enabled={}", file.name, file.enabled);
                 }
-        let _ = core.delete_instance(&instance.id);
             }
             Err(error) => println!("INSTALL FAILED: {error}"),
         }
+        let _ = core.delete_instance(&instance.id);
         return;
     }
 
