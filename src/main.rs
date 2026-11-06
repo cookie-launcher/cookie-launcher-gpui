@@ -106,6 +106,41 @@ fn main() {
         return;
     }
 
+    // `--launch-instance <id>` exercises the real launch path (effective
+    // version, installer if needed, then the game) for an existing profile.
+    if std::env::args().any(|arg| arg == "--launch-instance") {
+        let id = std::env::args()
+            .skip_while(|arg| arg != "--launch-instance")
+            .nth(1)
+            .unwrap_or_default();
+        let core = core::Core::new();
+        match core.launch(api::LaunchRequest {
+            instance_id: Some(id.clone()),
+            username: "Steve".to_string(),
+            ram: 2,
+            cookie_optimized: true,
+            jvm_preset: "aikar".to_string(),
+            quick_play: None,
+        }) {
+            Ok(()) => {
+                println!("LAUNCH STARTED");
+                for _ in 0..150 {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    if !core.status().is_running && core.status().percent == 0 {
+                        break;
+                    }
+                }
+                let status = core.status();
+                println!("STATUS running={} pid={:?}", status.is_running, status.minecraft_pid);
+                for line in core.logs().iter().rev().take(6).rev() {
+                    println!("LOG {line}");
+                }
+            }
+            Err(error) => println!("LAUNCH FAILED: {error:#}"),
+        }
+        return;
+    }
+
     // `--forge-probe <mc> <forge|neoforge>` installs the loader and reports the
     // resulting version id + classpath size (no game launch).
     if std::env::args().any(|arg| arg == "--forge-probe") {

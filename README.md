@@ -33,6 +33,7 @@ CL_TAB=modrinth cargo run # belirli sekmede aç
 | Vanilla launch: jar + kütüphaneler + natives + assetler + JVM | `launch.rs` | ✅ doğrulandı |
 | **Fabric / Quilt** profili (`inheritsFrom` birleştirme, ASM dedupe) | `launch.rs` | ✅ doğrulandı |
 | **Forge / NeoForge** (resmi installer + `arguments` hattı) | `core.rs` + `launch.rs` | ✅ doğrulandı (1.20.1 Forge, 1.21.1 NeoForge) |
+| Sürüme uygun JVM seçimi (`javaVersion.majorVersion`) | `launch.rs` | ✅ `/usr/lib64/jvm` taranıyor |
 | Modrinth arama (sürüm + yükleyici facet'li) | `core.rs` | ✅ |
 | Modrinth kurulum (jar + bağımlılık) | `core.rs` | ✅ |
 | **Modpack kurulumu** (`.mrpack` → profil) | `core.rs` | ✅ doğrulandı (47 mod) |

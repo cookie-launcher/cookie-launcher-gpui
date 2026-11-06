@@ -22,6 +22,7 @@ pub struct Prepared {
     pub main_class: String,
     pub arguments: Option<Arguments>,
     pub library_dir: PathBuf,
+    pub required_java: u32,
     pub classpath: String,
     pub assets_dir: PathBuf,
     pub asset_index: String,
@@ -402,7 +403,7 @@ impl Core {
             }
         }
 
-        let _ = json.java_version.map(|j| j.major);
+        let required_java = json.java_version.as_ref().map(|j| j.major).unwrap_or(8);
         // A loader profile must own a jar named after itself: Forge puts its
         // own name into `-DignoreList`, and leaving the vanilla jar there makes
         // two modules export the same package.
@@ -430,6 +431,7 @@ impl Core {
         Ok(Prepared {
             arguments: json.arguments.clone(),
             library_dir: lib_dir.clone(),
+            required_java,
             main_class: if json.main_class.is_empty() {
                 "net.minecraft.client.main.Main".to_string()
             } else {
@@ -505,7 +507,15 @@ impl Core {
         vars.insert("user_type", "legacy".to_string());
         vars.insert("version_type", "CookieLauncher".to_string());
 
-        let mut command = Command::new(java_binary());
+        let java = pick_java(prepared.required_java);
+        if let Some(major) = java.1 {
+            self.log(format!(
+                "Java: {} (sürüm {major}, gerekli {})",
+                java.0.display(),
+                prepared.required_java
+            ));
+        }
+        let mut command = Command::new(&java.0);
         command
             .arg(format!("-Xmx{ram}G"))
             .arg(format!("-Xms{}G", (ram / 2).max(1)));
@@ -575,6 +585,9 @@ impl Core {
             .stderr(Stdio::piped());
 
         self.log(format!("Java başlatılıyor: {ram} GB, {}", options.username));
+        if std::env::var("CL_PRINT_CMD").is_ok() {
+            eprintln!("CMD {command:?}");
+        }
         let mut child = command.spawn().context("Java başlatılamadı")?;
         let pid = child.id();
         self.set_launch_pid(pid);
@@ -976,4 +989,80 @@ fn substitute(text: &str, vars: &std::collections::HashMap<&str, String>) -> Str
         out = out.replace(&format!("${{{key}}}"), value);
     }
     out
+}
+
+/// Find a JVM that matches the version the profile asks for. The best match is
+/// an exact major, then the smallest newer one; with nothing suitable the
+/// default `java` is used and the caller logs the mismatch.
+fn pick_java(required: u32) -> (PathBuf, Option<u32>) {
+    let mut candidates: Vec<(PathBuf, u32)> = Vec::new();
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(home) = std::env::var("JAVA_HOME") {
+        roots.push(PathBuf::from(home));
+    }
+    for base in [
+        "/usr/lib64/jvm",
+        "/usr/lib/jvm",
+        "/usr/java",
+        "/opt/java",
+        "/opt/jdk",
+    ] {
+        if let Ok(entries) = fs::read_dir(base) {
+            for entry in entries.flatten() {
+                roots.push(entry.path());
+            }
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        for base in [home.join(".jdks"), home.join(".local/share/jdks")] {
+            if let Ok(entries) = fs::read_dir(base) {
+                for entry in entries.flatten() {
+                    roots.push(entry.path());
+                }
+            }
+        }
+    }
+    for root in roots {
+        let java = root.join("bin/java");
+        if !java.exists() {
+            continue;
+        }
+        if let Some(major) = jdk_major(&root) {
+            candidates.push((java, major));
+        }
+    }
+
+    candidates.sort_by_key(|(_, major)| *major);
+    if let Some((path, major)) = candidates
+        .iter()
+        .find(|(_, major)| *major == required)
+        .cloned()
+    {
+        return (path, Some(major));
+    }
+    if let Some((path, major)) = candidates
+        .iter()
+        .find(|(_, major)| *major > required)
+        .cloned()
+    {
+        return (path, Some(major));
+    }
+    (PathBuf::from(java_binary()), None)
+}
+
+/// Read `<jdk>/release` (`JAVA_VERSION="17.0.2"`) without spawning the JVM.
+fn jdk_major(root: &Path) -> Option<u32> {
+    let text = fs::read_to_string(root.join("release")).ok()?;
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("JAVA_VERSION="))?;
+    let version = line.split('=').nth(1)?.trim().trim_matches('"');
+    let mut parts = version.split('.');
+    let first = parts.next()?;
+    if first == "1" {
+        parts.next()?.parse().ok()
+    } else {
+        first.parse().ok()
+    }
 }
