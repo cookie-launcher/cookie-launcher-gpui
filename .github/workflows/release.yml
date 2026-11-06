@@ -59,24 +59,21 @@ jobs:
         run: ls -lh dist/*.tar.gz dist/*.AppImage dist/*.deb
 
       - name: Sürüme yükle
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.tar.gz
-            dist/*.AppImage
-            dist/*.deb
-          generate_release_notes: true
-          body: |
-            Cookie Launcher — açık kaynak Minecraft başlatıcı (GPUI, %100 Rust; webview yok, Python yok).
-
-            **Paketler**
-            - `*.AppImage` — çalıştırılabilir tek dosya (`chmod +x` sonrası doğrudan çalışır)
-            - `*.deb` — Debian/Ubuntu: `sudo apt install ./cookie-launcher_*_amd64.deb`
-            - `*.tar.gz` — taşınabilir klasör, içinde `install.sh`
-
-            Gereksinimler: Linux (X11 veya Wayland), Vulkan/OpenGL sürücüsü, Minecraft için Java 8–21.
-            Mod kaynağı Modrinth'tir. Minecraft, Mojang Synergies AB'nin ticari markasıdır;
-            bu proje Mojang/Microsoft ile bağlantılı veya onaylı değildir.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          TAG="v${VERSION}"
+          FILES=(dist/*.tar.gz dist/*.AppImage dist/*.deb)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${FILES[@]}" --clobber
+          else
+            gh release create "$TAG" "${FILES[@]}" \
+              --title "Cookie Launcher ${TAG}" \
+              --notes-file .github/release-notes.md
+          fi
+          gh release view "$TAG" --json assets -q '.assets[] | "\(.name)  \(.size) bayt"'
 
       - name: Workflow çıktısı
         uses: actions/upload-artifact@v4
