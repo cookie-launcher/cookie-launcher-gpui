@@ -1,0 +1,89 @@
+name: Release
+
+# Etiket push'unda (v*) paket üretip sürüme yükler; elle de çalıştırılabilir.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    name: Linux (AppImage + deb + tarball)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sistem bağımlılıkları
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libxcb-xkb-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libfontconfig1-dev libfreetype6-dev \
+            libwayland-dev libx11-xcb-dev \
+            libvulkan-dev libasound2-dev \
+            dpkg-dev libfuse2
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo önbelleği
+        uses: Swatinem/rust-cache@v2
+
+      - name: Testler
+        run: cargo test --locked
+
+      - name: Release derlemesi
+        run: cargo build --release --locked
+
+      - name: appimagetool
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /usr/local/bin/appimagetool \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /usr/local/bin/appimagetool
+
+      - name: Paketler (tarball + AppImage)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: ./packaging/build-bundle.sh
+
+      - name: Paket (.deb)
+        run: ./packaging/build-deb.sh
+
+      - name: Dosyaları listele
+        run: ls -lh dist/*.tar.gz dist/*.AppImage dist/*.deb
+
+      - name: Sürüme yükle
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.AppImage
+            dist/*.deb
+          generate_release_notes: true
+          body: |
+            Cookie Launcher — açık kaynak Minecraft başlatıcı (GPUI, %100 Rust; webview yok, Python yok).
+
+            **Paketler**
+            - `*.AppImage` — çalıştırılabilir tek dosya (`chmod +x` sonrası doğrudan çalışır)
+            - `*.deb` — Debian/Ubuntu: `sudo apt install ./cookie-launcher_*_amd64.deb`
+            - `*.tar.gz` — taşınabilir klasör, içinde `install.sh`
+
+            Gereksinimler: Linux (X11 veya Wayland), Vulkan/OpenGL sürücüsü, Minecraft için Java 8–21.
+            Mod kaynağı Modrinth'tir. Minecraft, Mojang Synergies AB'nin ticari markasıdır;
+            bu proje Mojang/Microsoft ile bağlantılı veya onaylı değildir.
+
+      - name: Workflow çıktısı
+        uses: actions/upload-artifact@v4
+        with:
+          name: cookie-launcher-linux
+          path: |
+            dist/*.tar.gz
+            dist/*.AppImage
+            dist/*.deb
+          if-no-files-found: error
