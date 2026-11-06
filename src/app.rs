@@ -177,6 +177,8 @@ pub struct AppView {
     pub username: Entity<InputState>,
     pub search_input: Entity<InputState>,
     pub friend_input: Entity<InputState>,
+    /// Friend code (ABC123) used by "Arkadaş ekle".
+    pub friend_code_input: Entity<InputState>,
     pub ram_gb: u32,
     pub ram_slider: Entity<SliderState>,
     pub optimize_engine: bool,
@@ -231,6 +233,8 @@ impl AppView {
         let username = cx.new(|cx| InputState::new(window, cx).placeholder("Oyuncu adı").default_value("Steve"));
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Mod, modpack veya shader ara…"));
         let friend_input = cx.new(|cx| InputState::new(window, cx).placeholder("Arkadaş kodu (CL1-…)"));
+        let friend_code_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Arkadaş kodu (ABC123)"));
         username.focus_handle(cx).focus(window, cx);
 
         let ram_slider = cx.new(|_| {
@@ -298,6 +302,7 @@ impl AppView {
             username,
             search_input,
             friend_input,
+            friend_code_input,
             ram_gb: 4,
             ram_slider,
             optimize_engine: true,

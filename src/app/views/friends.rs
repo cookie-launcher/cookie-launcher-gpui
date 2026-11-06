@@ -299,6 +299,27 @@ impl AppView {
             panel
         };
 
+        let friend_add_row = h_flex()
+            .w_full()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(Input::new(&self.friend_code_input)),
+            )
+            .child(
+                Button::new("friend-add")
+                    .outline()
+                    .label("Arkadaş ekle")
+                    .icon(IconName::Plus)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let code = this.friend_code_input.read(cx).value().to_string();
+                        this.add_friend(code, cx);
+                    })),
+            );
+
         let add_row = h_flex()
             .w_full()
             .items_center()
@@ -420,6 +441,7 @@ impl AppView {
             .child(identity)
             .child(share_panel)
             .child(lan_panel)
+            .child(friend_add_row)
             .child(add_row)
             .child(body)
             .into_any_element()

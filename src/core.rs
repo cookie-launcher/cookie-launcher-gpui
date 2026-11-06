@@ -1762,6 +1762,29 @@ mod tests {
     }
 
     #[test]
+    fn adds_and_removes_friends_persistently() {
+        let core = temp_core("friends");
+        assert!(core.add_friend("abc123").is_ok(), "küçük harf kabul edilmeli");
+
+        let friends = core.social_state().unwrap().friends;
+        assert_eq!(friends.len(), 1);
+        assert_eq!(friends[0].code, "ABC123");
+
+        // Persisted next to the data dir, not just in memory.
+        let stored = fs::read_to_string(core.data_dir.join("friends.json")).unwrap();
+        assert!(stored.contains("ABC123"));
+
+        // Duplicates and your own code are refused.
+        assert!(core.add_friend("ABC123").is_err());
+        let own = core.identity().code.clone();
+        assert!(core.add_friend(&own).is_err());
+        assert!(core.add_friend("   ").is_err());
+
+        core.remove_friend("ABC123").unwrap();
+        assert!(core.social_state().unwrap().friends.is_empty());
+    }
+
+    #[test]
     fn rejects_bad_minecraft_versions() {
         let core = temp_core("versions-guard");
         for bad in ["", "  ", "1.21.4 beta", "../evil", "a/b", &"9".repeat(41)] {
