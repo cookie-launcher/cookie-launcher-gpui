@@ -282,11 +282,11 @@ impl Core {
             "resourcepack" => "resourcepacks",
             _ => "mods",
         });
-        let from = dir.join(name);
+        let from = self.checked_child(&dir, name)?;
         let to = if name.ends_with(".disabled") {
-            dir.join(name.trim_end_matches(".disabled"))
+            self.checked_child(&dir, name.trim_end_matches(".disabled"))?
         } else {
-            dir.join(format!("{name}.disabled"))
+            self.checked_child(&dir, &format!("{name}.disabled"))?
         };
         fs::rename(&from, &to).context("İçerik durumu değiştirilemedi")?;
         Ok(())
@@ -298,11 +298,13 @@ impl Core {
             "resourcepack" => "resourcepacks",
             _ => "mods",
         });
-        let path = dir.join(name);
+        let path = self.checked_child(&dir, name)?;
         if path.is_dir() {
             fs::remove_dir_all(&path)?;
-        } else {
+        } else if path.exists() {
             fs::remove_file(&path)?;
+        } else {
+            return Err(anyhow!("İçerik bulunamadı."));
         }
         Ok(())
     }
@@ -341,11 +343,23 @@ impl Core {
     }
 
     pub fn screenshot_bytes(&self, name: &str) -> Result<Vec<u8>> {
-        let path = self.mc_dir.join("screenshots").join(name);
-        if !path.starts_with(self.mc_dir.join("screenshots")) {
-            return Err(anyhow!("Geçersiz dosya."));
-        }
+        let path = self.checked_child(&self.mc_dir.join("screenshots"), name)?;
         Ok(fs::read(path)?)
+    }
+
+    /// Join a user-supplied name under `dir`, rejecting absolute paths and any
+    /// `..` component. `Path::starts_with` is component-wise and would happily
+    /// accept `dir/../../etc`.
+    fn checked_child(&self, dir: &Path, name: &str) -> Result<PathBuf> {
+        let relative = Path::new(name);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(anyhow!("Geçersiz dosya adı."));
+        }
+        Ok(dir.join(relative))
     }
 
     pub fn open_folder(&self, sub: &str) -> Result<()> {
@@ -1801,6 +1815,25 @@ mod tests {
 
         core.delete_content("modlu", "mod", "lithium.jar").unwrap();
         assert_eq!(core.content("modlu", "mod").len(), 1);
+    }
+
+    #[test]
+    fn rejects_path_traversal_in_file_names() {
+        let core = temp_core("traversal");
+        let root = core.mc_dir.clone();
+        fs::create_dir_all(root.join("screenshots")).unwrap();
+        fs::write(root.join("secret.txt"), b"top secret").unwrap();
+
+        // Before the guard this resolved to `<mc>/secret.txt`.
+        assert!(core.screenshot_bytes("../secret.txt").is_err());
+        assert!(core.screenshot_bytes("/etc/passwd").is_err());
+
+        fs::write(root.join("screenshots/shot.png"), b"png").unwrap();
+        assert_eq!(core.screenshot_bytes("shot.png").unwrap(), b"png");
+
+        core.create_instance("Dosya Profili", "1.21.4", "vanilla", "").unwrap();
+        assert!(core.toggle_content("dosya_profili", "mod", "../../evil.jar").is_err());
+        assert!(core.delete_content("dosya_profili", "mod", "../../evil.jar").is_err());
     }
 
     #[test]
