@@ -378,6 +378,7 @@ impl AppView {
                             "search" => window.dispatch_action(Box::new(FocusSearch), cx),
                             "shortcuts" => window.dispatch_action(Box::new(ShowShortcuts), cx),
                             "details" => {}
+                            "first-profile" => this.create_first_profile(cx),
                             "sort" => {
                                 this.sort_open = true;
                                 cx.notify();
@@ -1027,6 +1028,35 @@ impl AppView {
         self.refresh_pack_status(cx);
         self.tab = Tab::Profile;
         cx.notify();
+    }
+
+    /// One-click first profile: newest release, vanilla.
+    pub fn create_first_profile(&mut self, cx: &mut Context<Self>) {
+        let version = self
+            .versions
+            .iter()
+            .find(|entry| entry.kind == "release")
+            .map(|entry| entry.id.clone())
+            .unwrap_or_else(|| "1.21.4".to_string());
+        let name = format!("Profil {}", self.instances.len() + 1);
+        self.request(
+            cx,
+            move |core| core.create_instance(&name, &version, "vanilla", ""),
+            |this, result, cx| {
+                match result {
+                    Ok(instance) => {
+                        this.set_active(instance.id.clone(), cx);
+                        this.toast(
+                            format!("Profil oluşturuldu: {}", instance.name),
+                            ToastKind::Success,
+                            cx,
+                        );
+                    }
+                    Err(error) => this.toast(error.to_string(), ToastKind::Error, cx),
+                }
+                this.refresh_instances(cx);
+            },
+        );
     }
 
     /// Ask Modrinth whether the profile's pack has a newer version.

@@ -89,6 +89,9 @@ penceresi. GPUI `actions!` + `cx.bind_keys` + kök `key_context("Launcher")`.
 ```bash
 ./packaging/install.sh              # ~/.local/bin + ikon + masaüstü girdisi
 PREFIX=/usr/local sudo ./packaging/install.sh
+
+./packaging/build-bundle.sh         # dist/cookie-launcher-<sürüm>.tar.gz
+                                    # (appimagetool varsa AppImage de üretir)
 ```
 
 `packaging/install.sh` release derler, `cookie-launcher` adıyla `bin/`e kurar,
@@ -101,7 +104,7 @@ Wayland app id'si masaüstü girdisiyle eşleşir.
 
 - **Profil detay ekranı** (`pds-*`): içerik/sürüm/dünya/log/not sekmeleri
 - `Noise_XX` uçtan uca şifreleme (CLT1 kimlik doğrulama var, taşıma şifrelemesi yok)
-- AppImage / deb paketi (şu an ikon + `.desktop` + kurulum betiği var)
+- AppImage/deb üretimi için `appimagetool`/`dpkg-deb` gerekli (betik hazır, araç yoksa tarball üretiyor)
 
 ## Testler
 

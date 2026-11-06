@@ -18,7 +18,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::app::{AppView, Tab, ToastKind};
-use crate::theme::Cocoa;
+use crate::theme::{Cocoa, RADIUS_SURFACE};
 use crate::widgets::LaunchMode;
 use crate::widgets::*;
 
@@ -35,6 +35,9 @@ impl AppView {
             .gap_3()
             .bg(cx.theme().background)
             .child(self.render_hero(cx))
+            .when(self.instances.is_empty(), |this| {
+                this.child(first_run_card(cx))
+            })
             .child(
                 h_flex()
                     .w_full()
@@ -827,6 +830,47 @@ fn hero_status_badge(label: &str, tone: ChipTone, cx: &App) -> AnyElement {
                 .font_weight(FontWeight::BOLD)
                 .text_color(fg)
                 .child(label.to_string()),
+        )
+        .into_any_element()
+}
+
+/// First launch: without any profile the launcher would just look empty, so
+/// offer the one action that makes it usable.
+fn first_run_card(cx: &mut Context<AppView>) -> AnyElement {
+    let cocoa = Cocoa::get(cx).clone_shades();
+    h_flex()
+        .w_full()
+        .items_center()
+        .justify_between()
+        .gap_4()
+        .p_4()
+        .rounded(px(RADIUS_SURFACE))
+        .bg(cocoa.surface_1)
+        .border_1()
+        .border_color(cocoa.amber)
+        .child(
+            v_flex()
+                .gap_1()
+                .child(
+                    div()
+                        .text_size(px(15.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(cocoa.text_2)
+                        .child("Henüz profil yok"),
+                )
+                .child(
+                    div()
+                        .text_size(TEXT_11)
+                        .text_color(cocoa.text_3)
+                        .child("En son Minecraft sürümüyle bir profil oluşturup hemen başlayabilirsin."),
+                ),
+        )
+        .child(
+            gpui_kit::component::button::Button::new("first-profile")
+                .primary()
+                .label("İlk profili oluştur")
+                .icon(gpui_kit::assets::IconName::Plus)
+                .on_click(cx.listener(|this, _, _, cx| this.create_first_profile(cx))),
         )
         .into_any_element()
 }
