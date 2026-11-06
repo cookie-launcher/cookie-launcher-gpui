@@ -89,6 +89,12 @@ impl Core {
         }
     }
 
+    pub fn clear_logs(&self) {
+        if let Ok(mut logs) = self.logs.lock() {
+            logs.clear();
+        }
+    }
+
     pub fn logs(&self) -> Vec<String> {
         self.logs
             .lock()

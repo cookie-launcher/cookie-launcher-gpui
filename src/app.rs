@@ -372,6 +372,16 @@ impl AppView {
                             "search" => window.dispatch_action(Box::new(FocusSearch), cx),
                             "shortcuts" => window.dispatch_action(Box::new(ShowShortcuts), cx),
                             "details" => {}
+                            "lightbox" => {
+                                if let Some(shot) = this.screenshots.first().cloned() {
+                                    this.open_lightbox(shot.name, cx);
+                                } else {
+                                    this.refresh_screenshots(cx);
+                                    if let Some(shot) = this.screenshots.first().cloned() {
+                                        this.open_lightbox(shot.name, cx);
+                                    }
+                                }
+                            }
                             "profile" => {
                                 if let Some(id) = this.active_id.clone() {
                                     this.open_profile(id, cx);
@@ -696,6 +706,62 @@ impl AppView {
 
     /// Screenshot bytes are served by the core; decode the first few so the
     /// gallery shows the actual images instead of placeholders.
+    /// Decode a screenshot at full resolution and show it in a modal dialog
+    /// (the dialog layer dims the app for us).
+    pub fn open_lightbox(&mut self, name: String, cx: &mut Context<Self>) {
+        let core = self.core.clone();
+        let task_name = name.clone();
+        let task = cx.background_spawn(async move {
+            core.screenshot_bytes(&task_name)
+                .ok()
+                .filter(|bytes| !bytes.is_empty())
+        });
+        cx.spawn(async move |this, cx| {
+            let bytes = task.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match bytes {
+                    Some(bytes) => {
+                        let image =
+                            std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, bytes));
+                        let caption = name.clone();
+                        window.open_dialog(cx, move |dialog, _, _| {
+                            dialog
+                                .title("Ekran görüntüsü")
+                                .w(px(940.))
+                                .child(
+                                    v_flex()
+                                        .gap_2()
+                                        .items_center()
+                                        .child(
+                                            gpui::img(image.clone())
+                                                .max_w(px(880.))
+                                                .max_h(px(560.))
+                                                .rounded(px(6.)),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(TEXT_11)
+                                                .font_family("JetBrains Mono")
+                                                .child(caption.clone()),
+                                        ),
+                                )
+                                .footer(
+                                    gpui_kit::component::dialog::DialogFooter::new().child(
+                                        Button::new("lightbox-close")
+                                            .label("Kapat")
+                                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                                    ),
+                                )
+                        });
+                    }
+                    None => this.toast("Ekran görüntüsü okunamadı.", ToastKind::Error, cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn load_thumbnails(&mut self, cx: &mut Context<Self>) {
         let core = self.core.clone();
         let names: Vec<String> = self
@@ -1590,6 +1656,7 @@ impl Render for AppView {
             .on_action(cx.listener(|this, _: &ShowShortcuts, window, cx| {
                 this.shortcuts_dialog(window, cx)
             }))
+            .relative()
             .size_full()
             .bg(background)
             .text_color(foreground)

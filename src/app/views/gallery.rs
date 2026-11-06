@@ -56,11 +56,17 @@ impl AppView {
         } else {
             let mut grid = h_flex().w_full().flex_wrap().gap_3();
             for shot in &self.screenshots {
+                let shot_name = shot.name.clone();
                 grid = grid.child(
                     v_flex()
+                        .id(SharedString::from(format!("shot-{}", shot.name)))
                         .w(px(220.))
                         .gap_2()
                         .p_2()
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_lightbox(shot_name.clone(), cx)
+                        }))
                         .rounded(px(RADIUS_SURFACE))
                         .bg(cocoa.surface_1)
                         .border_1()

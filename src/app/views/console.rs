@@ -8,7 +8,7 @@ use gpui_kit::component::{
 use gpui_kit::assets::IconName;
 use gpui_kit::*;
 
-use crate::app::AppView;
+use crate::app::{AppView, ToastKind};
 use crate::theme::{Cocoa, RADIUS_SURFACE};
 use crate::widgets::*;
 
@@ -32,6 +32,19 @@ impl AppView {
                         .label("Yenile")
                         .icon(IconName::RefreshCw)
                         .on_click(cx.listener(|this, _, _, cx| this.load_logs(cx))),
+                )
+                .child(
+                    Button::new("console-clear")
+                        .ghost()
+                        .small()
+                        .label("Temizle")
+                        .icon(IconName::Trash)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.core.clear_logs();
+                            this.logs.clear();
+                            this.toast("Konsol temizlendi.", ToastKind::Info, cx);
+                            cx.notify();
+                        })),
                 )
                 .child(
                     Button::new("console-copy")
