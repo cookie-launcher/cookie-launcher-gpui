@@ -437,11 +437,11 @@ impl Core {
             } else {
                 json.main_class
             },
-            classpath: classpath.join(":"),
+            classpath: classpath.join(&classpath_separator().to_string()),
             assets_dir,
             asset_index: asset_index_id,
             natives_dir,
-            classpath_sep: ':' as char,
+            classpath_sep: classpath_separator(),
         })
     }
 
@@ -489,7 +489,7 @@ impl Core {
         vars.insert("launcher_name", "CookieLauncher".to_string());
         vars.insert("launcher_version", "4.0.0".to_string());
         vars.insert("classpath", prepared.classpath.clone());
-        vars.insert("classpath_separator", ":".to_string());
+        vars.insert("classpath_separator", prepared.classpath_sep.to_string());
         vars.insert("library_directory", prepared.library_dir.display().to_string());
         vars.insert("version_name", options.version.to_string());
         vars.insert("game_directory", instance_dir.display().to_string());
@@ -694,11 +694,39 @@ fn rules_allow_with(
     allowed
 }
 
-fn java_binary() -> String {
+/// `;` on Windows, `:` everywhere else — the JVM splits the classpath on the
+/// platform separator, so both the value and the `classpath_separator`
+/// placeholder have to follow it.
+pub(crate) fn classpath_separator() -> char {
+    if cfg!(windows) {
+        ';'
+    } else {
+        ':'
+    }
+}
+
+fn java_exe() -> &'static str {
+    if cfg!(windows) {
+        "java.exe"
+    } else {
+        "java"
+    }
+}
+
+pub(crate) fn java_binary() -> String {
     if let Ok(explicit) = std::env::var("COOKIE_JAVA") {
         return explicit;
     }
-    "java".to_string()
+    let java = java_exe();
+    // A `JAVA_HOME` install is the usual case on Windows, and `PATH` lookups
+    // in a GUI process only see the machine PATH, so prefer the explicit one.
+    if let Ok(home) = std::env::var("JAVA_HOME") {
+        let candidate = PathBuf::from(home).join("bin").join(java);
+        if candidate.exists() {
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+    java.to_string()
 }
 
 /// `OfflinePlayer:<name>` UUID v3, the same value the Python core sends.
@@ -715,6 +743,18 @@ fn offline_uuid(username: &str) -> String {
 }
 
 pub(crate) fn extract_zip(archive: &Path, target: &Path) -> Result<()> {
+    fs::create_dir_all(target)?;
+    // `unzip` does not exist on Windows and `jar` is only there when a JDK is
+    // installed, so the archive is unpacked in-process. That also means pack
+    // installs and native extraction work on a machine with nothing but the
+    // launcher on it.
+    if unzip_native(archive, target).is_ok() {
+        #[cfg(unix)]
+        fix_extracted_permissions(target, 0);
+        return Ok(());
+    }
+
+    // Fallback for exotic archives the pure-Rust reader refuses.
     let status = Command::new("unzip")
         .arg("-q")
         .arg("-o")
@@ -735,12 +775,42 @@ pub(crate) fn extract_zip(archive: &Path, target: &Path) -> Result<()> {
     }
     // Archives in the wild (a real .mrpack did this) can carry entries with
     // mode 000; unzip reproduces them and every later read fails with EACCES.
+    #[cfg(unix)]
     fix_extracted_permissions(target, 0);
     Ok(())
 }
 
+/// In-process unzip: skips the platform tools entirely (`unzip`/`jar` may be
+/// missing, and `jar` needs a JDK before the first launch).
+fn unzip_native(archive: &Path, target: &Path) -> Result<()> {
+    use std::io::Write;
+
+    let file = fs::File::open(archive)?;
+    let mut zip = zip::ZipArchive::new(file)?;
+    for index in 0..zip.len() {
+        let mut entry = zip.by_index(index)?;
+        let Some(relative) = entry.enclosed_name() else {
+            continue;
+        };
+        let path = target.join(relative);
+        if entry.is_dir() {
+            fs::create_dir_all(&path)?;
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut out = fs::File::create(&path)?;
+        std::io::copy(&mut entry, &mut out)?;
+        out.flush()?;
+    }
+    Ok(())
+}
+
 /// Give extracted files a readable mode. Directories keep the executable bit so
-/// they stay traversable.
+/// they stay traversable. NTFS has no POSIX mode bits, so Windows has nothing
+/// to fix here.
+#[cfg(unix)]
 fn fix_extracted_permissions(root: &Path, depth: usize) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -995,26 +1065,38 @@ fn substitute(text: &str, vars: &std::collections::HashMap<&str, String>) -> Str
 /// an exact major, then the smallest newer one; with nothing suitable the
 /// default `java` is used and the caller logs the mismatch.
 fn pick_java(required: u32) -> (PathBuf, Option<u32>) {
-    let mut candidates: Vec<(PathBuf, u32)> = Vec::new();
-    let mut roots: Vec<PathBuf> = Vec::new();
-    if let Ok(home) = std::env::var("JAVA_HOME") {
-        roots.push(PathBuf::from(home));
-    }
-    for base in [
+    #[cfg(windows)]
+    const JAVA_ROOTS: &[&str] = &[
+        r"C:\\Program Files\\Java",
+        r"C:\\Program Files\\Eclipse Adoptium",
+        r"C:\\Program Files\\Microsoft",
+        r"C:\\Program Files\\BellSoft",
+        r"C:\\Program Files\\Zulu",
+        r"C:\\Program Files (x86)\\Java",
+    ];
+    #[cfg(not(windows))]
+    const JAVA_ROOTS: &[&str] = &[
         "/usr/lib64/jvm",
         "/usr/lib/jvm",
         "/usr/java",
         "/opt/java",
         "/opt/jdk",
-    ] {
+    ];
+
+    let mut candidates: Vec<(PathBuf, u32)> = Vec::new();
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(home) = std::env::var("JAVA_HOME") {
+        roots.push(PathBuf::from(home));
+    }
+    for base in JAVA_ROOTS {
         if let Ok(entries) = fs::read_dir(base) {
             for entry in entries.flatten() {
                 roots.push(entry.path());
             }
         }
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
+    {
+        let home = crate::core::home_dir();
         for base in [home.join(".jdks"), home.join(".local/share/jdks")] {
             if let Ok(entries) = fs::read_dir(base) {
                 for entry in entries.flatten() {
@@ -1024,7 +1106,7 @@ fn pick_java(required: u32) -> (PathBuf, Option<u32>) {
         }
     }
     for root in roots {
-        let java = root.join("bin/java");
+        let java = root.join("bin").join(java_exe());
         if !java.exists() {
             continue;
         }
