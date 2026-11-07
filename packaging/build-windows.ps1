@@ -47,6 +47,7 @@ Cookie Launcher $Version — Windows (x64)
 
 Gereksinimler:
   - Windows 10/11 x64, DirectX 11/12 uyumlu ekran kartı sürücüsü
+  - Microsoft Visual C++ 2015-2022 Redistributable (x64) — exe dinamik CRT kullanır
   - Java 8-21 (JAVA_HOME veya PATH'te). Launcher sürüme uygun JVM'i kendisi seçer.
   - İnternet (ilk çalıştırmada sürüm manifesti ve oyun dosyaları indirilir).
 
@@ -58,8 +59,12 @@ ile bağlantılı veya onaylı değildir.
 "@ | Set-Content -Encoding UTF8 (Join-Path $Stage "README.txt")
 
 $Zip = Join-Path $Dist "$Name.zip"
+# Sürüm sayfasına doğrudan indirilebilen tek dosyalık exe de bırakılır.
+$Loose = Join-Path $Dist "$Name.exe"
+Copy-Item $Exe $Loose -Force
 if (Test-Path $Zip) { Remove-Item -Force $Zip }
 Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath $Zip -CompressionLevel Optimal
 
 Write-Host "✓ $Zip"
+Write-Host "✓ $Loose"
 Get-Item $Zip | ForEach-Object { Write-Host ("  {0:N1} MB" -f ($_.Length / 1MB)) }

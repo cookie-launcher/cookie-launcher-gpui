@@ -93,7 +93,8 @@ Sürüm paketleri CI'da üretilir: **https://github.com/cookie-launcher/cookie-l
 | `cookie-launcher-<sürüm>-x86_64.AppImage` | tek dosya, `chmod +x` sonrası çalışır |
 | `cookie-launcher_<sürüm>_amd64.deb` | `sudo apt install ./cookie-launcher_*_amd64.deb` |
 | `cookie-launcher-<sürüm>.tar.gz` | taşınabilir klasör + `install.sh` |
-| `cookie-launcher-<sürüm>-windows-x64.zip` | Windows x64, `cookie-launcher.exe` (kurulum gerekmez) |
+| `cookie-launcher-<sürüm>-windows-x64.zip` | Windows x64, `cookie-launcher.exe` + README (kurulum gerekmez) |
+| `cookie-launcher-<sürüm>-windows-x64.exe` | aynı exe, zip'siz tek dosya indirme |
 
 Workflow: `v*` etiketi push edilince (veya `workflow_dispatch` ile) çalışır,
 testleri koşar, Linux (AppImage + deb + tarball) ve Windows (zip) paketlerini
