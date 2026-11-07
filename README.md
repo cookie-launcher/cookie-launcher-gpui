@@ -93,10 +93,26 @@ Sürüm paketleri CI'da üretilir: **https://github.com/cookie-launcher/cookie-l
 | `cookie-launcher-<sürüm>-x86_64.AppImage` | tek dosya, `chmod +x` sonrası çalışır |
 | `cookie-launcher_<sürüm>_amd64.deb` | `sudo apt install ./cookie-launcher_*_amd64.deb` |
 | `cookie-launcher-<sürüm>.tar.gz` | taşınabilir klasör + `install.sh` |
+| `cookie-launcher-<sürüm>-windows-x64.zip` | Windows x64, `cookie-launcher.exe` (kurulum gerekmez) |
 
 Workflow: `v*` etiketi push edilince (veya `workflow_dispatch` ile) çalışır,
-testleri koşar, release derlemesini alır ve üç paketi sürüme yükler.
-`.github/workflows/ci.yml` her push/PR'da derleme + test + clippy çalıştırır.
+testleri koşar, Linux (AppImage + deb + tarball) ve Windows (zip) paketlerini
+üretip tek bir sürüme yükler. `.github/workflows/ci.yml` her push/PR'da Linux
+derleme + test + clippy ile birlikte `x86_64-pc-windows-gnu` çapraz derlemesini
+de doğrular.
+
+### Windows
+
+```powershell
+cargo run                              # normal
+.\packaging\build-windows.ps1          # dist\cookie-launcher-<sürüm>-windows-x64.zip
+```
+
+- Derleme `windows-latest` üzerinde yapılır; `.exe` ikonu + DPI/UTF-8 manifesti
+  `build.rs` tarafından `assets/cookie-launcher.ico`'dan gömülür.
+- Java 8-21 `JAVA_HOME` veya `PATH`'te olmalı; launcher sürüme uygun JVM'i
+  `C:\Program Files\...` altından kendisi seçer.
+- Veriler `%USERPROFILE%\.minecraft` ve `%USERPROFILE%\.cookie_launcher`.
 
 ```bash
 ./packaging/install.sh              # ~/.local/bin + ikon + masaüstü girdisi

@@ -41,3 +41,25 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
         continue-on-error: true
+
+  # Gerçek Windows makinesinde derleme + test. Çapraz derleme yerine yerel
+  # runner: gpui Windows'ta DirectX'e bağlandığı için çapraz link kırılgan.
+  windows:
+    name: Derleme ve test (Windows x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo önbelleği
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows
+
+      - name: Derleme (check)
+        run: cargo check --locked --all-targets
+
+      - name: Testler
+        run: cargo test --locked

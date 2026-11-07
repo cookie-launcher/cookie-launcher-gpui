@@ -5,7 +5,9 @@ edition = "2021"
 publish = false
 description = "Dev helper: capture the launcher window without raising it"
 
-[dependencies]
+# The capture helper talks to KWin over D-Bus, so it only exists on Linux.
+# Windows builds still compile the crate, it just has nothing to do there.
+[target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5"
 zvariant = "5"
 image = { version = "0.25", default-features = false, features = ["png"] }

@@ -397,6 +397,12 @@ impl Core {
             || relative
                 .components()
                 .any(|c| matches!(c, std::path::Component::ParentDir))
+            // Windows also hands back Prefix components for `C:foo`, and `\`
+            // and `/` are both separators there.
+            || relative
+                .components()
+                .any(|c| !matches!(c, std::path::Component::Normal(_)))
+            || name.contains('\\')
         {
             return Err(anyhow!("Geçersiz dosya adı."));
         }
@@ -889,7 +895,7 @@ impl Core {
         self.download_to(&url, &installer)?;
 
         self.log("Yükleyici çalıştırılıyor (java -jar … --installClient)…".to_string());
-        let output = Command::new("java")
+        let output = Command::new(crate::launch::java_binary())
             .arg("-jar")
             .arg(&installer)
             .arg("--installClient")
@@ -1103,20 +1109,41 @@ struct ProjectDependency {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// The user's home directory. Windows has no `HOME`, and `%USERPROFILE%` is
+/// what everything else there uses (`C:\Users\ada`).
+pub(crate) fn home_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(profile) = std::env::var_os("USERPROFILE") {
+            return PathBuf::from(profile);
+        }
+        if let Some(drive) = std::env::var_os("HOMEDRIVE") {
+            let path = std::env::var_os("HOMEPATH").unwrap_or_default();
+            let mut full = std::ffi::OsString::from(drive);
+            full.push(path);
+            if !full.is_empty() {
+                return PathBuf::from(full);
+            }
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home);
+    }
+    PathBuf::from(".")
+}
+
 fn minecraft_dir() -> PathBuf {
     if let Ok(explicit) = std::env::var("COOKIE_MINECRAFT_DIR") {
         return PathBuf::from(explicit);
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".minecraft")
+    home_dir().join(".minecraft")
 }
 
 fn data_dir() -> PathBuf {
     if let Ok(explicit) = std::env::var("COOKIE_LAUNCHER_DATA_DIR") {
         return PathBuf::from(explicit);
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".cookie_launcher")
+    home_dir().join(".cookie_launcher")
 }
 
 fn read_instance(dir: &Path) -> Option<Instance> {
@@ -1270,15 +1297,24 @@ pub fn urlencode(value: &str) -> String {
 }
 
 fn open_path(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = Command::new("explorer");
+        // `explorer` only understands native separators.
+        let native: std::ffi::OsString =
+            path.as_os_str().to_string_lossy().replace('/', "\\").into();
+        command.arg(native);
+        command
+    };
     #[cfg(target_os = "linux")]
     let mut command = Command::new("xdg-open");
     #[cfg(target_os = "macos")]
     let mut command = Command::new("open");
-    #[cfg(target_os = "windows")]
-    let mut command = Command::new("explorer");
+
+    #[cfg(not(windows))]
+    command.arg(path);
 
     command
-        .arg(path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
