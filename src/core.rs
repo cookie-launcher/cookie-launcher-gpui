@@ -413,10 +413,17 @@ impl Core {
         let relative = Path::new(sub);
         // `Path::starts_with` compares components, so `mc/../etc` would pass a
         // naive prefix check. Reject the escape at the source instead.
-        if relative.is_absolute()
-            || relative
-                .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
+        // `is_absolute` Windows'ta `/etc` gibi sürücüsüz kök yolları mutlak
+        // saymaz (kök var, sürücü yok), bu yüzden kontrolü atlatıyordu.
+        // `has_root` iki platformda da kökü yakalar; `Prefix` de `C:foo` gibi
+        // sürücü-göreli yolları eler.
+        if relative.has_root()
+            || relative.components().any(|c| {
+                matches!(
+                    c,
+                    std::path::Component::Prefix(_) | std::path::Component::ParentDir
+                )
+            })
         {
             return Err(anyhow!("Geçersiz klasör yolu."));
         }
